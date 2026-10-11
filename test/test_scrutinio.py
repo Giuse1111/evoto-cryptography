@@ -34,7 +34,7 @@ def config_data(
 
     candidate_counts = candidate_counts or {}
     list_names = ("Lista A", "Lista B", "Lista C", "Lista D")
-    genders = ("M", "F", "M", "F", "M", "F", "M")
+    genders = ("M", "F")
 
     districts = []
 
@@ -50,7 +50,7 @@ def config_data(
             candidates[list_name] = [
                 {
                     "name": f"{list_name[-1]}{district_index}-{position}",
-                    "gender": genders[position],
+                    "gender": genders[position % 2],
                 }
                 for position in range(count)
             ]
@@ -112,15 +112,15 @@ def scrutiny_single_district(list_votes: tuple[int, ...]):
     """
     Scrutinio con una sola circoscrizione.
 
-    Ogni lista ha capolista e sei candidati, così anche una lista
-    con 6 seggi ha abbastanza candidati da eleggere.
+    Ogni lista ha capolista e nove candidati: 10 candidati per
+    10 seggi, come richiede la configurazione.
     """
 
-    config = parse_election_config(config_data(default_count=7))
+    config = parse_election_config(config_data(default_count=10))
 
     return run_scrutiny(
         config,
-        (result(0, list_votes, preference_count=24),),
+        (result(0, list_votes, preference_count=36),),
     )
 
 
@@ -328,19 +328,23 @@ def test_district_cap_moves_seats_to_another_district():
     A ha 390 voti nella prima circoscrizione e 10 nella seconda:
     senza limiti i suoi 3 seggi andrebbero tutti nella prima (2,925
     e 0,075). Ma nella prima A ha solo capolista e un candidato:
-    ne restano 2 e il terzo passa alla seconda.
+    ne restano 2 e il terzo passa alla seconda. Nella seconda A ha
+    8 candidati, così in tutto ne ha 10, quanti i seggi.
     """
 
     config = parse_election_config(
         config_data(
             district_count=2,
-            candidate_counts={(0, "Lista A"): 2},
+            candidate_counts={
+                (0, "Lista A"): 2,
+                (1, "Lista A"): 8,
+            },
         )
     )
 
     results = (
         result(0, (390, 50, 200, 150), preference_count=13),
-        result(1, (10, 50, 200, 250)),
+        result(1, (10, 50, 200, 250), preference_count=19),
     )
 
     scrutiny = run_scrutiny(config, results)
@@ -356,7 +360,7 @@ def test_list_without_votes_never_competes():
     Anche con soglia 0% una lista senza voti non entra nel riparto.
     """
 
-    data = config_data(default_count=7)
+    data = config_data(default_count=10)
     data["rules"]["list_threshold_percent"] = 0
     data["rules"]["coalition_threshold_percent"] = 0
 
@@ -364,7 +368,7 @@ def test_list_without_votes_never_competes():
 
     scrutiny = run_scrutiny(
         config,
-        (result(0, (300, 150, 550, 0), preference_count=24),),
+        (result(0, (300, 150, 550, 0), preference_count=36),),
     )
 
     names = tuple(competitor.name for competitor in scrutiny.competitors)
@@ -391,11 +395,18 @@ def test_blank_votes_are_not_valid_votes():
     Le schede bianche sono contate a parte e non pesano sulle soglie.
     """
 
-    config = parse_election_config(config_data())
+    config = parse_election_config(config_data(default_count=10))
 
     scrutiny = run_scrutiny(
         config,
-        (result(0, (300, 150, 350, 200), blank_votes=500),),
+        (
+            result(
+                0,
+                (300, 150, 350, 200),
+                blank_votes=500,
+                preference_count=36,
+            ),
+        ),
     )
 
     assert scrutiny.blank_votes == 500
@@ -431,7 +442,17 @@ def test_scrutiny_without_valid_votes():
     Con sole schede bianche non c'è nulla da ripartire.
     """
 
-    config = parse_election_config(config_data())
+    config = parse_election_config(config_data(default_count=10))
 
-    with pytest.raises(ValueError):
-        run_scrutiny(config, (result(0, (0, 0, 0, 0), blank_votes=5),))
+    with pytest.raises(ValueError, match="voti validi"):
+        run_scrutiny(
+            config,
+            (
+                result(
+                    0,
+                    (0, 0, 0, 0),
+                    blank_votes=5,
+                    preference_count=36,
+                ),
+            ),
+        )

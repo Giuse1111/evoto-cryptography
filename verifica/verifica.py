@@ -6,6 +6,7 @@ I controlli vengono ricostruiti in modo indipendente
 a partire dai dati pubblici dell'elezione.
 """
 
+from collections.abc import Callable
 import gmpy2
 import hashlib
 import json
@@ -82,6 +83,25 @@ def is_subgroup_element(
             p,
         )
     ) == 1
+
+
+def _is_group_integer(
+    value: object,
+    p: int,
+) -> bool:
+    """
+    Controlla che value sia un intero (non bool) in [1, p - 1].
+
+    È il controllo economico usato per gli impegni delle prove OR,
+    la cui appartenenza al sottogruppo segue dalle equazioni di
+    verifica.
+    """
+
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and 0 < value < p
+    )
 
 
 def _mod_pow(
@@ -217,6 +237,7 @@ def multiply_ciphertexts(
     ciphertexts: tuple[tuple[int, int], ...],
     p: int,
     q: int,
+    check_membership: bool = True,
 ) -> tuple[int, int]:
     """
     Moltiplica una sequenza di ciphertext ElGamal.
@@ -225,9 +246,15 @@ def multiply_ciphertexts(
     (alpha, beta).
 
     La sequenza vuota produce l'identità (1, 1).
+
+    Con check_membership=False il chiamante garantisce di aver già
+    controllato l'appartenenza al sottogruppo dei ciphertext.
     """
 
     for alpha, beta in ciphertexts:
+        if not check_membership:
+            continue
+
         if not is_subgroup_element(
             alpha,
             p,
@@ -269,9 +296,13 @@ def divide_ciphertexts(
     denominator: tuple[int, int],
     p: int,
     q: int,
+    check_membership: bool = True,
 ) -> tuple[int, int]:
     """
     Divide due ciphertext ElGamal componente per componente.
+
+    Con check_membership=False il chiamante garantisce di aver già
+    controllato l'appartenenza al sottogruppo dei ciphertext.
     """
 
     numerator_alpha, numerator_beta = numerator
@@ -284,7 +315,7 @@ def divide_ciphertexts(
         denominator_beta,
     )
 
-    if not all(
+    if check_membership and not all(
         is_subgroup_element(
             value,
             p,
@@ -331,6 +362,7 @@ def verify_r2_rule(
     g: int,
     public_key: int,
     context: int,
+    check_membership: bool = True,
 ) -> bool:
     """
     Verifica R2.
@@ -344,6 +376,7 @@ def verify_r2_rule(
             ciphertexts=ciphertexts,
             p=p,
             q=q,
+            check_membership=check_membership,
         )
     except ValueError:
         return False
@@ -358,6 +391,7 @@ def verify_r2_rule(
         beta=beta,
         allowed_values=(1,),
         branches=branches,
+        check_membership=check_membership,
     )
 
 
@@ -373,6 +407,7 @@ def verify_r3_rule(
     g: int,
     public_key: int,
     context: int,
+    check_membership: bool = True,
 ) -> bool:
     """
     Verifica R3.
@@ -387,6 +422,7 @@ def verify_r3_rule(
             denominator=preference_ciphertext,
             p=p,
             q=q,
+            check_membership=check_membership,
         )
     except ValueError:
         return False
@@ -401,6 +437,7 @@ def verify_r3_rule(
         beta=beta,
         allowed_values=(0, 1),
         branches=branches,
+        check_membership=check_membership,
     )
 
 
@@ -419,18 +456,27 @@ def verify_r4_rule(
     public_key: int,
     context: int,
     max_preferences: int,
+    check_membership: bool = True,
 ) -> bool:
     """
     Verifica R4.
 
     La somma delle preferenze deve essere compresa
     tra 0 e il limite massimo configurato.
+
+    Il numero di rami si controlla prima di costruire l'insieme
+    dei valori ammessi: un limite enorme nel registro non deve
+    far allocare memoria inutilmente.
     """
 
     if (
         not isinstance(max_preferences, int)
+        or isinstance(max_preferences, bool)
         or max_preferences < 0
     ):
+        return False
+
+    if len(branches) != max_preferences + 1:
         return False
 
     try:
@@ -438,6 +484,7 @@ def verify_r4_rule(
             ciphertexts=preference_ciphertexts,
             p=p,
             q=q,
+            check_membership=check_membership,
         )
     except ValueError:
         return False
@@ -454,6 +501,7 @@ def verify_r4_rule(
             range(max_preferences + 1)
         ),
         branches=branches,
+        check_membership=check_membership,
     )
 
 
@@ -472,18 +520,26 @@ def verify_r5_rule(
     public_key: int,
     context: int,
     max_preferences_per_gender: int,
+    check_membership: bool = True,
 ) -> bool:
     """
     Verifica R5 per un singolo genere.
 
     La somma delle preferenze del genere deve essere compresa
     tra 0 e il limite per genere configurato.
+
+    Come in R4, il numero di rami si controlla prima di costruire
+    l'insieme dei valori ammessi.
     """
 
     if (
         not isinstance(max_preferences_per_gender, int)
+        or isinstance(max_preferences_per_gender, bool)
         or max_preferences_per_gender < 0
     ):
+        return False
+
+    if len(branches) != max_preferences_per_gender + 1:
         return False
 
     try:
@@ -491,6 +547,7 @@ def verify_r5_rule(
             ciphertexts=gender_ciphertexts,
             p=p,
             q=q,
+            check_membership=check_membership,
         )
     except ValueError:
         return False
@@ -507,6 +564,7 @@ def verify_r5_rule(
             range(max_preferences_per_gender + 1)
         ),
         branches=branches,
+        check_membership=check_membership,
     )
 
 
@@ -700,6 +758,7 @@ def verify_value_set_proof(
         tuple[int, int, int, int],
         ...,
     ],
+    check_membership: bool = True,
 ) -> bool:
     """
     Verifica una prova OR che dimostra che un ciphertext
@@ -707,6 +766,13 @@ def verify_value_set_proof(
 
     Ogni ramo contiene:
     (commitment_1, commitment_2, challenge, response).
+
+    Degli impegni basta controllare che siano interi in [1, p - 1]:
+    se g^z = a * alpha^c e alpha sta nel sottogruppo, anche a ci sta
+    (lo stesso per b con K e beta). Con check_membership=False il
+    chiamante garantisce di aver già controllato public_key, alpha e
+    beta, per esempio perché il ciphertext è derivato da altri già
+    controllati.
     """
 
     if not allowed_values:
@@ -736,12 +802,18 @@ def verify_value_set_proof(
         beta,
     )
 
-    if not all(
-        is_subgroup_element(
-            value,
-            p,
-            q,
-        )
+    if check_membership:
+        if not all(
+            is_subgroup_element(
+                value,
+                p,
+                q,
+            )
+            for value in subgroup_values
+        ):
+            return False
+    elif not all(
+        _is_group_integer(value, p)
         for value in subgroup_values
     ):
         return False
@@ -765,18 +837,10 @@ def verify_value_set_proof(
             response,
         ) = branch
 
-        if not is_subgroup_element(
-            commitment_1,
-            p,
-            q,
-        ):
+        if not _is_group_integer(commitment_1, p):
             return False
 
-        if not is_subgroup_element(
-            commitment_2,
-            p,
-            q,
-        ):
+        if not _is_group_integer(commitment_2, p):
             return False
 
         if not 0 <= challenge < q:
@@ -1000,7 +1064,8 @@ def verify_v1_parameters(
     - primalità di p e q;
     - divisibilità di p - 1 per q;
     - validità di g nel sottogruppo;
-    - appartenenza della chiave pubblica al sottogruppo.
+    - appartenenza della chiave pubblica al sottogruppo, con K diverso
+      da 1 (K = 1 vorrebbe dire chiave segreta 0, cioè voti in chiaro).
     """
 
     if not all(
@@ -1029,7 +1094,7 @@ def verify_v1_parameters(
     if not 1 < g < p:
         return False
 
-    if not 0 < public_key < p:
+    if not 1 < public_key < p:
         return False
 
     if _mod_pow(g, q, p) != 1:
@@ -1057,7 +1122,7 @@ def parse_public_registry(
 
     try:
         registry = json.loads(serialized)
-    except (json.JSONDecodeError, TypeError) as exc:
+    except (ValueError, TypeError, RecursionError) as exc:
         raise ValueError(
             "Il registro pubblico non contiene JSON valido."
         ) from exc
@@ -3540,6 +3605,15 @@ def verify_v3_ballots(
 ) -> bool:
     """
     Verifica R1-R5 di tutte le schede pubblicate.
+
+    Ogni scheda deve avere un ciphertext per ogni lista della
+    configurazione, uno per la scheda bianca e uno per ogni casella
+    di preferenza della sua circoscrizione.
+
+    L'appartenenza al sottogruppo si controlla una volta sola: per la
+    chiave K all'inizio e per i ciphertext di ogni scheda prima delle
+    prove. I ciphertext derivati per R2-R5 sono prodotti e quozienti di
+    elementi già controllati, quindi stanno nel sottogruppo.
     """
 
     if not isinstance(registry, dict):
@@ -3567,8 +3641,16 @@ def verify_v3_ballots(
         ]
 
         entries = board["entries"]
+        list_count = len(configuration["lists"])
 
         if not isinstance(entries, list):
+            return False
+
+        if not is_subgroup_element(
+            public_key,
+            p,
+            q,
+        ):
             return False
 
         for entry in entries:
@@ -3593,6 +3675,9 @@ def verify_v3_ballots(
                     district_index,
                 )
             )
+
+            if len(list_ciphertexts) != list_count:
+                return False
 
             if len(
                 preference_ciphertexts
@@ -3632,6 +3717,17 @@ def verify_v3_ballots(
             ):
                 return False
 
+            if not all(
+                is_subgroup_element(
+                    component,
+                    p,
+                    q,
+                )
+                for ciphertext in canonical
+                for component in ciphertext
+            ):
+                return False
+
             for ciphertext, proof in zip(
                 canonical,
                 r1_proofs,
@@ -3650,6 +3746,7 @@ def verify_v3_ballots(
                         _proof_branches_from_data(
                             proof
                         ),
+                    check_membership=False,
                 ):
                     return False
 
@@ -3669,6 +3766,7 @@ def verify_v3_ballots(
                 g=g,
                 public_key=public_key,
                 context=q_bar,
+                check_membership=False,
             ):
                 return False
 
@@ -3704,6 +3802,7 @@ def verify_v3_ballots(
                     g=g,
                     public_key=public_key,
                     context=q_bar,
+                    check_membership=False,
                 ):
                     return False
 
@@ -3723,6 +3822,7 @@ def verify_v3_ballots(
                 context=q_bar,
                 max_preferences=
                     max_preferences,
+                check_membership=False,
             ):
                 return False
 
@@ -3769,6 +3869,7 @@ def verify_v3_ballots(
                     context=q_bar,
                     max_preferences_per_gender=
                         max_per_gender,
+                    check_membership=False,
                 ):
                     return False
 
@@ -3991,11 +4092,52 @@ def verify_v6_decryption_shares(
     return True
 
 
+def _failed_checks() -> dict[str, bool]:
+    """
+    Esito di un registro che non si riesce nemmeno a leggere.
+    """
+
+    checks = {
+        f"V{number}": False
+        for number in range(1, 9)
+    }
+
+    checks["overall"] = False
+
+    return checks
+
+
+def _safe_check(
+    check: Callable[[], bool],
+) -> bool:
+    """
+    Esegue un controllo su dati non fidati.
+
+    Il registro può essere stato manomesso in qualunque modo: un dato
+    malformato che fa sollevare un'eccezione (divisione per zero,
+    tipo sbagliato, numeri enormi) vale come controllo fallito, invece
+    di interrompere tutta la verifica.
+    """
+
+    try:
+        return check() is True
+    except Exception:  # noqa: BLE001 - dati non fidati
+        return False
+
+
 def verify_public_registry(
     serialized: str,
 ) -> dict[str, bool]:
     """
     Esegue tutti i controlli V1-V8 sul registro pubblico.
+
+    Ogni controllo viene eseguito separatamente: un dato malformato
+    fa fallire solo i controlli che lo usano.
+
+    V7 combina le share di decifratura con Lagrange e ha senso solo
+    se le share sono valide, quindi viene eseguito solo se V6 è
+    superato; questo evita anche calcoli lunghi su insiemi di share
+    gonfiati ad arte.
     """
 
     try:
@@ -4003,17 +4145,7 @@ def verify_public_registry(
             serialized
         )
     except ValueError:
-        return {
-            "V1": False,
-            "V2": False,
-            "V3": False,
-            "V4": False,
-            "V5": False,
-            "V6": False,
-            "V7": False,
-            "V8": False,
-            "overall": False,
-        }
+        return _failed_checks()
 
     try:
         group = registry["group"]
@@ -4026,23 +4158,35 @@ def verify_public_registry(
         g = group["g"]
         public_key = registry["K"]
         quorum = context["quorum"]
+    except (
+        KeyError,
+        TypeError,
+    ):
+        return _failed_checks()
 
-        v1 = verify_v1_parameters(
+    v1 = _safe_check(
+        lambda: verify_v1_parameters(
             p=p,
             q=q,
             g=g,
             public_key=public_key,
         )
+    )
 
-        v2 = verify_v2_guardians(
+    v2 = _safe_check(
+        lambda: verify_v2_guardians(
             registry
         )
+    )
 
-        v3 = verify_v3_ballots(
+    v3 = _safe_check(
+        lambda: verify_v3_ballots(
             registry
         )
+    )
 
-        v4 = (
+    v4 = _safe_check(
+        lambda: (
             verify_v4_board_chain(
                 board=registry[
                     "bulletin_board"
@@ -4059,8 +4203,10 @@ def verify_public_registry(
                 g=g,
             )
         )
+    )
 
-        v5 = verify_v5_tallies(
+    v5 = _safe_check(
+        lambda: verify_v5_tallies(
             configuration=registry[
                 "configuration"
             ],
@@ -4073,12 +4219,16 @@ def verify_public_registry(
             p=p,
             q=q,
         )
+    )
 
-        v6 = verify_v6_decryption_shares(
+    v6 = _safe_check(
+        lambda: verify_v6_decryption_shares(
             registry
         )
+    )
 
-        v7 = verify_v7_results(
+    v7 = v6 and _safe_check(
+        lambda: verify_v7_results(
             published_tallies=registry[
                 "district_tallies"
             ],
@@ -4090,8 +4240,10 @@ def verify_public_registry(
             g=g,
             quorum=quorum,
         )
+    )
 
-        v8 = verify_v8_scrutiny(
+    v8 = _safe_check(
+        lambda: verify_v8_scrutiny(
             configuration=registry[
                 "configuration"
             ],
@@ -4102,23 +4254,7 @@ def verify_public_registry(
                 "scrutiny"
             ],
         )
-
-    except (
-        KeyError,
-        TypeError,
-        ValueError,
-    ):
-        return {
-            "V1": False,
-            "V2": False,
-            "V3": False,
-            "V4": False,
-            "V5": False,
-            "V6": False,
-            "V7": False,
-            "V8": False,
-            "overall": False,
-        }
+    )
 
     checks = {
         "V1": v1,

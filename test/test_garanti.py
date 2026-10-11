@@ -486,3 +486,29 @@ def test_key_ceremony_rejects_wrong_number_of_polynomials():
             election_id=1,
             coefficients=((300, 40), (400, 50)),
         )
+
+
+def test_key_ceremony_rejects_a_zero_secret():
+    """
+    Con P_1(x) = 300 + x e P_2(x) = 989 + 2x il segreto vale
+    300 + 989 = 1289 = 0 mod q: K = g^0 = 1 e i voti sarebbero in chiaro.
+    Con polinomi fissati la cerimonia viene rifiutata.
+    """
+
+    with pytest.raises(ValueError, match="K = 1"):
+        run_key_ceremony(
+            guardian_count=2,
+            quorum=2,
+            params=TEST_PARAMS,
+            election_id=1,
+            coefficients=((300, 1), (989, 2)),
+        )
+
+
+def test_extended_base_hash_rejects_the_identity_key():
+    """
+    Q_bar non si calcola con K = 1, che corrisponde alla chiave segreta 0.
+    """
+
+    with pytest.raises(ValueError):
+        compute_extended_base_hash(889, 1, TEST_PARAMS)

@@ -588,3 +588,43 @@ def test_district_decryption_requires_the_quorum():
             params=TEST_PARAMS,
             extended_base_hash=CONTEXT,
         )
+
+
+def test_district_decryption_uses_the_ceremony_quorum():
+    """
+    Il quorum dichiarato deve essere quello della cerimonia (2 impegni
+    per garante): con quorum 1 un solo garante darebbe un totale
+    sbagliato, quindi la decifratura viene rifiutata.
+    """
+
+    tally = tally_district(empty_board(), 0, LAYOUT, TEST_PARAMS)
+
+    with pytest.raises(ValueError, match="quorum"):
+        decrypt_district_tally(
+            tally=tally,
+            secret_shares=CEREMONY.secret_shares,
+            present_guardians=(1,),
+            records=CEREMONY.records,
+            quorum=1,
+            params=TEST_PARAMS,
+            extended_base_hash=CONTEXT,
+        )
+
+
+def test_district_decryption_rejects_unknown_guardians():
+    """
+    Un garante che non esiste dà un ValueError chiaro, non un KeyError.
+    """
+
+    tally = tally_district(empty_board(), 0, LAYOUT, TEST_PARAMS)
+
+    with pytest.raises(ValueError, match="garante 4"):
+        decrypt_district_tally(
+            tally=tally,
+            secret_shares=CEREMONY.secret_shares,
+            present_guardians=(1, 4),
+            records=CEREMONY.records,
+            quorum=2,
+            params=TEST_PARAMS,
+            extended_base_hash=CONTEXT,
+        )

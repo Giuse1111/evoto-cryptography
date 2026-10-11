@@ -144,6 +144,12 @@ def _parse_rules(data: dict) -> ElectoralRules:
                 f"Il campo {field} deve essere un intero non negativo."
             )
 
+    if max_per_gender > max_preferences:
+        raise ValueError(
+            "Il campo max_preferences_per_gender non può superare "
+            "max_preferences."
+        )
+
     bonus_seat_share = _percent(
         data["bonus_seats_percent"],
         "bonus_seats_percent",
@@ -174,6 +180,9 @@ def _parse_rules(data: dict) -> ElectoralRules:
 def _parse_candidate(data: dict) -> Candidate:
     """
     Legge un candidato e controlla nome e genere.
+
+    Il genere viene normalizzato (spazi tolti, maiuscolo): "f" e "F "
+    sono lo stesso genere per il vincolo R5.
     """
 
     name = data["name"]
@@ -187,7 +196,7 @@ def _parse_candidate(data: dict) -> Candidate:
 
     return Candidate(
         name=name,
-        gender=gender,
+        gender=gender.strip().upper(),
     )
 
 
@@ -198,7 +207,10 @@ def parse_election_config(data: dict) -> ElectionConfig:
     Controlliamo, tra l'altro, che:
     - i nomi delle liste siano distinti;
     - ogni circoscrizione abbia candidati per tutte e sole le liste;
-    - ogni lista abbia almeno il capolista in ogni circoscrizione.
+    - ogni lista abbia almeno il capolista in ogni circoscrizione;
+    - ogni lista abbia in tutto almeno tanti candidati quanti sono i
+      seggi, così lo scrutinio ha sempre qualcuno da eleggere per ogni
+      seggio vinto (sezione 42 della specifica).
 
     Le coalizioni sono ricavate dal campo coalition di ogni lista,
     nell'ordine in cui compaiono per la prima volta.
@@ -298,6 +310,21 @@ def _parse_election_config(data: dict) -> ElectionConfig:
                 candidates=tuple(candidates),
             )
         )
+
+    # Una lista non può vincere più seggi dei candidati che presenta:
+    # senza questo vincolo lo scrutinio si fermerebbe (sezione 46).
+    for list_index, list_name in enumerate(list_names):
+        total = sum(
+            len(district.candidates[list_index])
+            for district in districts
+        )
+
+        if total < seats:
+            raise ValueError(
+                f"La {list_name} ha {total} candidati in tutto, meno dei "
+                f"{seats} seggi: ogni lista deve avere almeno tanti "
+                "candidati quanti sono i seggi."
+            )
 
     return ElectionConfig(
         name=name,
