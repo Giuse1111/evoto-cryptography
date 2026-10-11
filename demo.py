@@ -69,8 +69,11 @@ def parse_arguments() -> argparse.Namespace:
 
     parser.add_argument(
         "--presenti",
-        default="1,3,5",
-        help="garanti presenti allo spoglio, separati da virgole",
+        default=None,
+        help=(
+            "garanti presenti allo spoglio, separati da virgole "
+            "(default 1,3,5, oppure i primi quorum garanti)"
+        ),
     )
 
     parser.add_argument(
@@ -80,7 +83,71 @@ def parse_arguments() -> argparse.Namespace:
         help="seme delle scelte casuali degli elettori",
     )
 
-    return parser.parse_args()
+    arguments = parser.parse_args()
+
+    try:
+        arguments.presenti = present_guardians(
+            arguments.presenti,
+            arguments.garanti,
+            arguments.quorum,
+        )
+    except ValueError as error:
+        parser.error(str(error))
+
+    return arguments
+
+
+def present_guardians(
+    text: str | None,
+    guardian_count: int,
+    quorum: int,
+) -> tuple[int, ...]:
+    """
+    Legge e controlla l'elenco dei garanti presenti.
+
+    Senza elenco si usano i garanti 1, 3 e 5 se esistono e bastano,
+    altrimenti i primi quorum garanti.
+    """
+
+    if not 1 <= quorum <= guardian_count:
+        raise ValueError(
+            "il quorum deve essere compreso tra 1 e il numero di garanti"
+        )
+
+    if text is None:
+        default = (1, 3, 5)
+
+        if max(default) <= guardian_count and len(default) >= quorum:
+            return default
+
+        return tuple(range(1, quorum + 1))
+
+    try:
+        present = tuple(
+            int(index)
+            for index in text.split(",")
+        )
+    except ValueError as error:
+        raise ValueError(
+            "--presenti vuole numeri separati da virgole, per esempio 1,3,5"
+        ) from error
+
+    if len(set(present)) != len(present):
+        raise ValueError("un garante compare due volte in --presenti")
+
+    for index in present:
+        if not 1 <= index <= guardian_count:
+            raise ValueError(
+                f"il garante {index} non esiste: i garanti vanno da 1 "
+                f"a {guardian_count}"
+            )
+
+    if len(present) < quorum:
+        raise ValueError(
+            f"servono almeno {quorum} garanti presenti per decifrare"
+        )
+
+    return present
 
 
 def main() -> None:
@@ -92,10 +159,7 @@ def main() -> None:
 
     config = load_election_config(arguments.config)
 
-    present = tuple(
-        int(index)
-        for index in arguments.presenti.split(",")
-    )
+    present = arguments.presenti
 
     weights = (
         EXAMPLE_WEIGHTS
@@ -184,11 +248,12 @@ def main() -> None:
     for candidate in scrutiny.elected:
         district = config.districts[candidate.district_index].name
         list_name = config.list_names[candidate.list_index]
-        role = (
-            "capolista"
-            if candidate.position == 0
-            else f"{candidate.preferences} preferenze"
-        )
+        if candidate.position == 0:
+            role = "capolista"
+        elif candidate.preferences == 1:
+            role = "1 preferenza"
+        else:
+            role = f"{candidate.preferences} preferenze"
 
         print(f"  {district:<8} {list_name}  {candidate.name:<16} {role}")
 
