@@ -1,6 +1,6 @@
 # eVoto — Specifica tecnica condivisa F1
 
-**Versione:** 0.6  
+**Versione:** 0.7  
 **Progetto:** Voto elettronico verificabile per elezioni politiche  
 **Corso:** Crittografia — LM Sicurezza Informatica, Università degli Studi di Milano  
 **Componenti del gruppo:**
@@ -1767,6 +1767,23 @@ R4 costruisce dinamicamente l'insieme dei valori ammessi:
 
 ```text
 (0, ..., max_preferences)
+```
+
+R5 usa allo stesso modo `(0, ..., max_preferences_per_gender)` per ogni genere.
+
+Una circoscrizione in cui le liste hanno solo il capolista non ha caselle di preferenza: R4 lavora allora sul prodotto vuoto, cioè `Enc(0) = (1, 1)` con nonce `0`, e le prove R5 non ci sono.
+
+## Controlli di appartenenza al sottogruppo (v0.7)
+
+Ogni valore ricevuto deve stare nel sottogruppo di ordine `q` (`x^q = 1 mod p`), ma non serve ricontrollarlo più volte:
+
+- negli impegni `a`, `b` di un ramo della prova OR basta controllare che siano interi in `[1, p - 1]`: se `g^z = a · alpha^c` vale e `g`, `alpha` stanno nel sottogruppo, anche `a` vi appartiene; lo stesso vale per `b` con `K` e `beta`;
+- `verify_ballot` controlla una volta sola `K` e le due componenti di ogni cifrato della scheda; i cifrati derivati per R2-R5 sono prodotti e quozienti di elementi già controllati e non vengono ricontrollati;
+- per questo `verify_value_in_set` e `verify_r1`, ..., `verify_r5` hanno il parametro `check_membership` (default `True`): `verify_ballot` li chiama con `False` dopo i suoi controlli.
+
+`verify_ballot` restituisce `False`, senza sollevare eccezioni, anche per una scheda malformata, e si ferma alla prima regola che fallisce.
+
+Per la scheda di riferimento (91 cifrati, 175 prove) i controlli `x^q = 1` della verifica passano da 1231 a 183 (sezione 50).
 
 ---
 
@@ -1802,6 +1819,23 @@ V8 scrutinio, seggi ed eletti               sezione 46
 parser del registro e orchestrazione V1-V8  sezione 47
 ```
 
+Regole aggiunte nella revisione (v0.7):
+
+- V1 rifiuta `K = 1`, che corrisponderebbe alla chiave segreta `0`;
+- V3 controlla che ogni scheda abbia un cifrato per ogni lista della configurazione, oltre a quelli già controllati per la bianca e per le caselle di preferenza della sua circoscrizione;
+- V3 controlla l'appartenenza al sottogruppo di `K` una volta e dei cifrati di ogni scheda una volta, come `verify_ballot` (sezione 40);
+- R4 e R5 confrontano il numero di rami con il limite prima di costruire l'insieme dei valori ammessi;
+- ogni controllo viene eseguito separatamente e qualunque eccezione su dati malformati vale come controllo fallito; il parser rifiuta anche JSON annidato oltre il limite di ricorsione;
+- V7 viene eseguito solo se V6 è superato: combina le share con Lagrange, che ha senso solo per share valide.
+
+## Riga di comando
+
+```text
+uv run python -m verifica registro.json
+```
+
+Stampa l'esito di V1-V8 e «ELEZIONE VERIFICATA» oppure «ATTENZIONE: VERIFICA FALLITA». Codice di uscita: `0` verificata, `1` almeno un controllo fallito, `2` file non leggibile. Il modulo `verifica/__main__.py` non importa `evoto`.
+
 ---
 
 # 42. Configurazione dell'elezione
@@ -1817,7 +1851,7 @@ Cambiare legge elettorale significa cambiare questo file, non il codice.
 {
   "name": "Elezione politica di esempio",
   "election_id": 1,
-  "seats": 30,
+  "seats": 2,
   "rules": {
     "max_preferences": 3,
     "max_preferences_per_gender": 2,
@@ -1839,7 +1873,8 @@ Cambiare legge elettorale significa cambiare questo file, non il codice.
           {"name": "Galli M.", "gender": "M"}
         ],
         "Lista C": [
-          {"name": "Moretti V.", "gender": "M"}
+          {"name": "Moretti V.", "gender": "M"},
+          {"name": "Barbieri N.", "gender": "M"}
         ]
       }
     }
@@ -1854,7 +1889,10 @@ Regole:
 - ogni circoscrizione ha candidati per tutte e sole le liste;
 - il primo candidato di ogni lista è il capolista bloccato, senza casella di preferenza; ogni altro candidato ha una casella;
 - le percentuali sono convertite in frazioni esatte (`2.5` diventa `1/40`), senza arrotondamenti in virgola mobile;
-- `election_id` è l'identificativo `e` del contesto `Q` (sezione 35).
+- `election_id` è l'identificativo `e` del contesto `Q` (sezione 35);
+- ogni lista deve avere in tutto, sommando le circoscrizioni e contando il capolista, almeno tanti candidati quanti sono i seggi (v0.7): così ogni seggio vinto ha un candidato da eleggere e lo scrutinio non può fermarsi (sezione 46);
+- il genere dei candidati viene normalizzato (spazi tolti, maiuscolo), quindi `"f"` e `"F "` sono lo stesso genere per R5;
+- `max_preferences_per_gender` non può superare `max_preferences`.
 
 ## Caselle di preferenza e layout
 
@@ -1869,7 +1907,7 @@ Le prove R4 e R5 e il verificatore indipendente usano quindi direttamente i limi
 
 ## Configurazione di esempio
 
-Tre circoscrizioni (Nord, Centro, Sud), 30 seggi, otto liste: la Coalizione Alfa (liste A, B, D), la Coalizione Beta (liste E, F, G) e due liste singole (C, H). Ogni lista ha il capolista e quattro candidati in ogni circoscrizione. Nella circoscrizione Nord le liste A, B e C riprendono l'esempio della proposta di progetto. Nomi e liste sono inventati.
+Tre circoscrizioni (Nord, Centro, Sud), 15 seggi, otto liste: la Coalizione Alfa (liste A, B, D), la Coalizione Beta (liste E, F, G) e due liste singole (C, H). Ogni lista ha il capolista e quattro candidati in ogni circoscrizione, cioè 15 candidati in tutto, quanti i seggi. Fino alla v0.6 i seggi erano 30: una lista che vinceva più di 15 seggi (per esempio con il premio) non aveva abbastanza candidati e lo scrutinio si fermava. Nella circoscrizione Nord le liste A, B e C riprendono l'esempio della proposta di progetto. Nomi e liste sono inventati.
 
 Le soglie e il premio sono valori illustrativi, da allineare al testo definitivo della legge.
 
@@ -2018,6 +2056,8 @@ class DistrictTally:
 
 Ogni totale viene decifrato con il protocollo della sezione 23, con `max_total = ballot_count` per il logaritmo discreto. Prima di combinarle, ogni share viene verificata con la chiave di verifica ricavata dagli impegni.
 
+Il quorum passato a `decrypt_district_tally` deve coincidere con quello della cerimonia, cioè con il numero di impegni di ogni garante: con un quorum più basso la combinazione di Lagrange darebbe un valore sbagliato. Un garante presente che non esiste dà un `ValueError` (v0.7).
+
 ```python
 @dataclass(frozen=True)
 class DistrictResult:
@@ -2065,7 +2105,7 @@ I seggi rimasti vanno ai resti più alti. A parità di resto vince chi ha più v
 5. **Premio.** Il competitore più votato riceve il premio se è l'unico primo e ha almeno `bonus_threshold · V` voti. Il premio vale `ceil(bonus_seat_share · S)` seggi. Se il riparto proporzionale gli dà già almeno quei seggi, il premio non si applica. Altrimenti il vincitore riceve i seggi del premio e gli altri competitori si ripartiscono i seggi rimanenti con i più alti resti.
 6. **Senza premio.** I seggi si ripartiscono tra tutti i competitori con i più alti resti.
 7. **Liste delle coalizioni.** I seggi di una coalizione si ripartiscono tra le sue liste sopra soglia, con i più alti resti sui voti di lista.
-8. **Circoscrizioni.** I seggi di ogni lista si ripartiscono tra le circoscrizioni con i più alti resti sui suoi voti in ciascuna, senza superare il numero di candidati della lista in quella circoscrizione. I seggi in eccesso passano alle circoscrizioni con posto, nell'ordine dei resti più alti (a parità, più voti e poi indice minore), un seggio per circoscrizione a ogni giro. Se i candidati non bastano lo scrutinio si ferma.
+8. **Circoscrizioni.** I seggi di ogni lista si ripartiscono tra le circoscrizioni con i più alti resti sui suoi voti in ciascuna, senza superare il numero di candidati della lista in quella circoscrizione. I seggi in eccesso passano alle circoscrizioni con posto, nell'ordine dei resti più alti (a parità, più voti e poi indice minore), un seggio per circoscrizione a ogni giro. Con il vincolo della sezione 42 i candidati di una lista bastano sempre per i suoi seggi; per una configurazione costruita senza quel controllo lo scrutinio si ferma con un errore.
 9. **Eletti.** In ogni circoscrizione il primo seggio di una lista va al capolista; gli altri ai candidati con più preferenze, a parità di preferenze a chi è più in alto nella lista.
 
 Semplificazione dichiarata: il numero di seggi di ogni circoscrizione non è fissato in anticipo, ma risulta dalla distribuzione dei seggi delle liste.
@@ -2116,7 +2156,7 @@ lista degli aventi diritto (VoterRoll)
 
 ---
 
-# 48. Stato del progetto (v0.6)
+# 48. Stato del progetto (v0.7)
 
 ```text
 F0 ambiente e repository                          completata
@@ -2172,16 +2212,15 @@ Gli esperimenti E2 (garanti assenti) ed E5 (costi di una scheda) sono in `esperi
 
 Persona A:
 
-- comando `python -m verifica <registro.json>` che stampi l'esito di V1-V8, da usare nella demo sul file scritto dalla cabina con `--registro` (sezione 52); la cabina usa già `verify_public_registry` nella pagina di verifica;
-- collaborazione alle misure dell'esperimento E5: tempi del verificatore indipendente e osservazione sui controlli di appartenenza (sezione 50);
-- preparazione del materiale relativo alla verifica indipendente per tesina e presentazione.
+- preparazione del materiale relativo alla verifica indipendente per tesina e presentazione;
+- rilettura delle correzioni della revisione v0.7 ai suoi moduli (sezione 53).
 
 Persona B:
 
 - tesina (F8): capitoli 4 (protocollo ed esempio a numeri piccoli), 6 (implementazione) e 8 (esperimenti E1-E5);
 - prova della demo all'esame (F9) con la cabina.
 
-Gli esperimenti E2 ed E5 (sezione 50), il notebook didattico (sezione 51) e la cabina elettorale web (sezione 52) di Persona B sono completati.
+Gli esperimenti E2 ed E5 (sezione 50), il notebook didattico (sezione 51) e la cabina elettorale web (sezione 52) di Persona B sono completati. La revisione completa del progetto è descritta nella sezione 53.
 
 ---
 
@@ -2195,6 +2234,7 @@ Gli esperimenti E2 ed E5 (sezione 50), il notebook didattico (sezione 51) e la c
 | 0.4 | Riallineamento pre-F6: `e = election_id`; limiti R4/R5 parametrizzati tramite `BallotLayout` e configurazione; verificatore indipendente allineato ai limiti dinamici e irrobustito sugli input; prodotto vuoto dei ciphertext pari a `(1, 1)`; `SimulationReport` conserva i `DistrictTally`; workflow Git aggiornato con merge autonomo consentito dopo test e rispetto della specifica |
 | 0.5 | Chiusura F6: registro pubblico JSON completo; parser e verificatore indipendente V1-V8; verifica cast-or-spoil e rilevamento duplicati; test E3 di manomissione ed E4 sui client non validi; T4 completato contro ElectionGuard; parametri demo MODP 2048/256 bit; test end-to-end del registro con `DEMO_PARAMS`; ottimizzazione delle esponenziazioni modulari del verificatore tramite `gmpy2.powmod` |
 | 0.6 | F7: esperimenti E2 (garanti assenti) ed E5 (costi di una scheda), sezione 50; notebook didattico, sezione 51; cabina elettorale web con verificatore integrato, sezione 52 |
+| 0.7 | Revisione completa (sezione 53): vincolo candidati/seggi ed esempio a 15 seggi; controlli di appartenenza una sola volta per scheda; V3 controlla il numero di liste; verificatore robusto ai registri malformati; comando `python -m verifica`; quorum della cerimonia e K diverso da 1 |
 
 ---
 
@@ -2286,14 +2326,14 @@ Risultati indicativi sulla scheda di riferimento, misurati su un portatile (su u
 
 | Configurazione | Dimensione | Cifratura | Verifica |
 |---|---|---|---|
-| 4096 bit, con impegni, Python puro | 477 KB | 27 s | 39 s |
-| 4096 bit, forma compatta, `gmpy2` | 116 KB | 1,5 s | 2,0 s |
-| 2048/256 bit, forma compatta, `gmpy2` | 69 KB | 0,4 s | 0,6 s |
-| 2048/256 bit, con impegni, `gmpy2` | 250 KB | 0,4 s | 0,6 s |
+| 4096 bit, con impegni, Python puro | 477 KB | 27 s | 23 s |
+| 4096 bit, forma compatta, `gmpy2` | 116 KB | 1,4 s | 1,2 s |
+| 2048/256 bit, forma compatta, `gmpy2` | 69 KB | 0,4 s | 0,4 s |
+| 2048/256 bit, con impegni, `gmpy2` | 250 KB | 0,4 s | 0,4 s |
 
-Cifrare la scheda richiede 2129 esponenziazioni, verificarla 2996. Con `N = 1.000.000` e il gruppo da 2048 bit: bacheca di circa 70 GB in forma compatta, circa 165 ore di verifica su un core, circa 45 minuti di conteggio omomorfico, pochi secondi di decifratura. `gmpy2` è da 8 a 20 volte più veloce di `pow()`, a seconda della macchina.
+Cifrare la scheda richiede 2129 esponenziazioni, verificarla 1948 (2996 prima della revisione v0.7). Con `N = 1.000.000` e il gruppo da 2048 bit: bacheca di circa 70 GB in forma compatta, circa 100 ore di verifica su un core (165 prima della revisione v0.7), circa 45 minuti di conteggio omomorfico, pochi secondi di decifratura. `gmpy2` è da 8 a 20 volte più veloce di `pow()`, a seconda della macchina.
 
-Osservazione sui controlli di appartenenza. Dei 2996 controlli della verifica, 1231 sono `x^q = 1`: 706 sugli impegni dei rami, 350 sulle componenti dei cifrati (182 originali e 168 derivati per R2-R5) e 175 sulla chiave `K`, una volta per prova. Il controllo degli impegni è implicato dalle equazioni di verifica: se `g^z = a · alpha^c` vale e `g`, `alpha` stanno nel sottogruppo, anche `a` vi appartiene. Anche i cifrati derivati, prodotti di elementi già controllati, e i controlli ripetuti su `K` sono ridondanti. Basterebbe controllare una volta `K` e le 182 componenti dei cifrati originali, con un risparmio di circa un terzo delle esponenziazioni della verifica. È una possibile ottimizzazione di `prove.py` e del verificatore (Persona A), non implementata.
+Controlli di appartenenza. Fino alla v0.6, delle 2996 esponenziazioni della verifica 1231 erano controlli `x^q = 1`: 706 sugli impegni dei rami, 350 sulle componenti dei cifrati (182 originali e 168 derivati per R2-R5) e 175 sulla chiave `K`, una volta per prova. Il controllo degli impegni è implicato dalle equazioni di verifica, i cifrati derivati sono prodotti di elementi già controllati e `K` basta controllarla una volta. Dalla v0.7 (sezione 40) restano 183 controlli, `K` e le 182 componenti dei cifrati, e la verifica scende a 1948 esponenziazioni, circa un terzo in meno; lo stesso vale per V3 nel verificatore indipendente.
 
 ---
 
@@ -2344,7 +2384,7 @@ Default: gruppo `DEMO_PARAMS`, 10 elettori simulati per circoscrizione, 5 garant
 | File | Contenuto |
 |---|---|
 | `sessione.py` | `ElectionSession`: tutta la logica della demo, senza Flask |
-| `app.py` | `create_app(session, registry_path)`: le pagine leggono e mostrano lo stato della sessione |
+| `app.py` | `create_app(election, registry_path)`: le pagine leggono e mostrano lo stato della sessione |
 | `templates/`, `static/` | HTML, CSS e JavaScript dell'interfaccia |
 | `__main__.py` | opzioni della riga di comando, cerimonia, elettori simulati, avvio del server |
 
@@ -2390,3 +2430,30 @@ Le manomissioni modificano solo il JSON pubblicato, mai lo stato dell'elezione:
 Il JavaScript della scheda serve solo alla comodità: una preferenza segna la sua lista, le preferenze di altre liste vengono tolte, i limiti R4 e R5 vengono segnalati. L'opzione «dispositivo scorretto» spegne questi controlli: la scheda viene rifiutata comunque, perché le prove non si costruiscono (E4).
 
 Nella demo il programma locale fa da dispositivo di voto e da bacheca, quindi riceve la scelta in chiaro e la cifra. In un sistema reale la cifratura avverrebbe sul dispositivo dell'elettore e la bacheca vedrebbe solo la scheda cifrata con le prove.
+
+---
+
+# 53. Revisione del progetto (v0.7)
+
+Revisione completa di libreria, verificatore, esperimenti, notebook, cabina e documentazione. Le formule della specifica risultano implementate correttamente e i valori della sezione 38 si riproducono; le correzioni riguardano casi limite, robustezza e prestazioni. Test: `test/test_revisione.py`, `test/test_verifica_cli.py`, `test/test_demo.py` e i test aggiornati dei moduli.
+
+| Problema | Correzione | Modulo |
+|---|---|---|
+| Una lista poteva vincere più seggi dei candidati che presenta (con 30 seggi e 15 candidati per lista, circa l'8% delle elezioni piccole) e lo scrutinio si fermava | Vincolo: ogni lista ha almeno tanti candidati quanti i seggi; esempio a 15 seggi (sezione 42) | `configurazione.py`, `config/elezione_esempio.json` |
+| Generi `"F"` e `"f"` contati come generi diversi in R5; limite per genere maggiore del limite totale accettato | Normalizzazione del genere e controllo dei limiti (sezione 42) | `configurazione.py` |
+| Una circoscrizione senza caselle di preferenza non poteva votare | Il prodotto vuoto vale `(1, 1)` (sezione 40) | `scheda.py` |
+| `verify_ballot` sollevava un'eccezione su una scheda malformata | Controllo dei cifrati prima dei derivati e arresto alla prima regola fallita (sezione 40) | `scheda.py` |
+| Controlli di appartenenza ripetuti: 1231 su 2996 esponenziazioni della verifica di una scheda | Impegni con controllo di intervallo, `K` e cifrati una volta per scheda (sezioni 40 e 50) | `prove.py`, `scheda.py`, `verifica.py` |
+| Una scheda SPOILED con una lista in più superava tutti i controlli | V3 confronta il numero di liste con la configurazione (sezione 41) | `verifica.py` |
+| Registri malformati (`q = 0`, limiti enormi, JSON molto annidato) facevano sollevare eccezioni al verificatore; molte share rallentavano V7 | Ogni controllo isolato, rami contati prima dei limiti, V7 solo dopo V6 (sezione 41) | `verifica.py` |
+| `K = 1` (chiave segreta 0) non rifiutata | La cerimonia ripete l'estrazione dei polinomi; `Q_bar` e V1 rifiutano `K = 1` | `garanti.py`, `verifica.py` |
+| Il quorum passato alla decifratura non veniva confrontato con quello della cerimonia; garante inesistente con `KeyError` | Controllo del quorum e dei garanti presenti (sezione 45) | `urna.py` |
+| `demo.py` non controllava `--presenti` | Controllo con messaggi chiari e default coerente con garanti e quorum | `demo.py` |
+| Verificatore lanciabile solo da Python | `python -m verifica registro.json` (sezione 41) | `verifica/__main__.py` |
+
+Osservazioni rimaste, senza modifiche:
+
+- la configurazione non è legata crittograficamente al contesto `Q` (che contiene solo `e`): il verificatore controlla che sia coerente, non che sia quella ufficiale; per un'elezione reale servirebbe pubblicarne l'impronta;
+- la prova OR non include nell'hash l'insieme dei valori ammessi né `g` e `K`, come deciso nella sezione 36: li fissano il verificatore e `Q_bar`;
+- `submit_ballot` non conosce il numero di circoscrizioni: l'indice della circoscrizione è garantito da `cast_voter_ballot`, che lo confronta con la lista degli aventi diritto.
+
