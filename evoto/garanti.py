@@ -131,10 +131,18 @@ def compute_extended_base_hash(
     Q_bar = H(Q, K)
 
     Lega tutte le prove successive alla chiave pubblica dell'elezione.
+
+    K = 1 vuol dire chiave segreta 0: beta = g^v e i voti sarebbero in
+    chiaro. Una cerimonia che produce K = 1 va rifatta.
     """
 
     if not is_subgroup_element(joint_public_key, params):
         raise ValueError("La chiave pubblica non appartiene al sottogruppo.")
+
+    if joint_public_key == 1:
+        raise ValueError(
+            "La chiave pubblica congiunta vale 1: la cerimonia va rifatta."
+        )
 
     return H(
         base_hash,
@@ -517,6 +525,11 @@ def run_key_ceremony(
     Se un impegno o una share non superano i controlli, la cerimonia
     si interrompe con un ValueError che indica il garante responsabile.
     Non implementiamo una fase di reclamo.
+
+    Con polinomi casuali la somma dei termini noti vale 0 mod q con
+    probabilità 1/q: la chiave segreta sarebbe 0 e K = 1. In quel caso
+    i garanti simulati estraggono nuovi polinomi; con polinomi fissati
+    la cerimonia viene rifiutata.
     """
 
     if guardian_count < 1:
@@ -539,15 +552,27 @@ def run_key_ceremony(
 
     indexes = tuple(range(1, guardian_count + 1))
 
-    guardians = tuple(
-        create_guardian(
-            index=index,
-            quorum=quorum,
-            params=params,
-            coefficients=None if coefficients is None else coefficients[index - 1],
+    def create_guardians() -> tuple[Guardian, ...]:
+        return tuple(
+            create_guardian(
+                index=index,
+                quorum=quorum,
+                params=params,
+                coefficients=None if coefficients is None else coefficients[index - 1],
+            )
+            for index in indexes
         )
-        for index in indexes
-    )
+
+    guardians = create_guardians()
+
+    while sum(guardian.coefficients[0] for guardian in guardians) % params.q == 0:
+        if coefficients is not None:
+            raise ValueError(
+                "I polinomi danno chiave segreta 0 (K = 1): "
+                "la cerimonia non è valida."
+            )
+
+        guardians = create_guardians()
 
     records = tuple(
         create_guardian_record(

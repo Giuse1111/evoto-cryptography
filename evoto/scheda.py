@@ -19,7 +19,10 @@ from evoto.elgamal import (
     divide_ciphertexts,
     multiply_ciphertexts,
 )
-from evoto.gruppo import GroupParameters
+from evoto.gruppo import (
+    GroupParameters,
+    is_subgroup_element,
+)
 from evoto.prove import (
     ValueSetProof,
     prove_value_in_set,
@@ -512,6 +515,10 @@ def verify_ballot(
 ) -> bool:
     """
     Verifica tutte le prove R1-R5 di una scheda politica.
+
+    Restituisce False, senza sollevare eccezioni, anche per una scheda
+    malformata: i ciphertext vengono controllati prima di calcolare i
+    ciphertext derivati, e le regole si fermano alla prima che fallisce.
     """
 
     if len(ballot.list_ciphertexts) != layout.list_count:
@@ -539,6 +546,20 @@ def verify_ballot(
     if len(proofs.r5_proofs) != len(gender_groups):
         return False
 
+    # Appartenenza al sottogruppo: K e i ciphertext della scheda si
+    # controllano una volta sola. I ciphertext derivati per R2-R5 sono
+    # prodotti e quozienti di questi, quindi stanno nel sottogruppo, e
+    # le prove non devono ricontrollarli.
+    if not is_subgroup_element(public_key, params):
+        return False
+
+    for ciphertext in all_ciphertexts:
+        if not is_subgroup_element(ciphertext.alpha, params):
+            return False
+
+        if not is_subgroup_element(ciphertext.beta, params):
+            return False
+
     r1_valid = all(
         verify_r1(
             ciphertext=ciphertext,
@@ -546,12 +567,16 @@ def verify_ballot(
             public_key=public_key,
             params=params,
             context=context,
+            check_membership=False,
         )
         for ciphertext, proof in zip(
             all_ciphertexts,
             proofs.r1_proofs,
         )
     )
+
+    if not r1_valid:
+        return False
 
     r2_valid = verify_r2(
         ciphertexts=(
@@ -562,7 +587,11 @@ def verify_ballot(
         public_key=public_key,
         params=params,
         context=context,
+        check_membership=False,
     )
+
+    if not r2_valid:
+        return False
 
     r3_valid = all(
         verify_r3(
@@ -576,11 +605,15 @@ def verify_ballot(
             public_key=public_key,
             params=params,
             context=context,
+            check_membership=False,
         )
         for index, metadata in enumerate(
             layout.preference_metadata
         )
     )
+
+    if not r3_valid:
+        return False
 
     r4_valid = verify_r4(
         preference_ciphertexts=(
@@ -591,9 +624,13 @@ def verify_ballot(
         public_key=public_key,
         params=params,
         context=context,
+        check_membership=False,
     )
 
-    r5_valid = all(
+    if not r4_valid:
+        return False
+
+    return all(
         verify_r5(
             gender_ciphertexts=tuple(
                 ballot.preference_ciphertexts[index]
@@ -606,20 +643,11 @@ def verify_ballot(
             public_key=public_key,
             params=params,
             context=context,
+            check_membership=False,
         )
         for indices, proof in zip(
             gender_groups,
             proofs.r5_proofs,
-        )
-    )
-
-    return all(
-        (
-            r1_valid,
-            r2_valid,
-            r3_valid,
-            r4_valid,
-            r5_valid,
         )
     )
 
@@ -655,9 +683,13 @@ def verify_r1(
     public_key: int,
     params: GroupParameters,
     context: int,
+    check_membership: bool = True,
 ) -> bool:
     """
     Verifica la prova R1 di una singola casella.
+
+    check_membership=False si usa quando K e il ciphertext sono già
+    stati controllati (vedi verify_ballot).
     """
 
     return verify_value_in_set(
@@ -667,6 +699,7 @@ def verify_r1(
         public_key=public_key,
         params=params,
         context=context,
+        check_membership=check_membership,
     )
 
 
@@ -675,15 +708,19 @@ def _multiply_all(
     params: GroupParameters,
 ) -> Ciphertext:
     """
-    Moltiplica una sequenza non vuota di ciphertext.
+    Moltiplica una sequenza di ciphertext.
+
+    La sequenza vuota dà (1, 1), cioè Enc(0) con nonce 0: serve per
+    una circoscrizione in cui le liste hanno solo il capolista e
+    quindi non ci sono caselle di preferenza.
     """
 
-    if not ciphertexts:
-        raise ValueError("È richiesto almeno un ciphertext.")
+    result = Ciphertext(
+        alpha=1,
+        beta=1,
+    )
 
-    result = ciphertexts[0]
-
-    for ciphertext in ciphertexts[1:]:
+    for ciphertext in ciphertexts:
         result = multiply_ciphertexts(
             result,
             ciphertext,
@@ -742,6 +779,7 @@ def verify_r2(
     public_key: int,
     params: GroupParameters,
     context: int,
+    check_membership: bool = True,
 ) -> bool:
     """
     Verifica la prova R2.
@@ -761,6 +799,7 @@ def verify_r2(
         public_key=public_key,
         params=params,
         context=context,
+        check_membership=check_membership,
     )
 
 
@@ -808,6 +847,7 @@ def verify_r3(
     public_key: int,
     params: GroupParameters,
     context: int,
+    check_membership: bool = True,
 ) -> bool:
     """
     Verifica la prova R3 per una singola preferenza.
@@ -826,6 +866,7 @@ def verify_r3(
         public_key=public_key,
         params=params,
         context=context,
+        check_membership=check_membership,
     )
 
 
@@ -842,7 +883,7 @@ def prove_r4(
     Genera la prova R4.
 
     La somma complessiva delle preferenze deve appartenere
-    all'insieme {0, 1, 2, 3}.
+    all'insieme {0, ..., max_preferences}.
     """
 
     if not (
@@ -882,11 +923,13 @@ def verify_r4(
     public_key: int,
     params: GroupParameters,
     context: int,
+    check_membership: bool = True,
 ) -> bool:
     """
     Verifica la prova R4.
 
-    La somma delle preferenze deve essere compresa tra 0 e 3.
+    La somma delle preferenze deve essere compresa tra 0 e
+    max_preferences.
     """
 
     derived_ciphertext = _multiply_all(
@@ -903,6 +946,7 @@ def verify_r4(
         public_key=public_key,
         params=params,
         context=context,
+        check_membership=check_membership,
     )
 
 
@@ -919,7 +963,7 @@ def prove_r5(
     Genera la prova R5 per un singolo genere.
 
     La somma delle preferenze dello stesso genere deve
-    appartenere all'insieme {0, 1, 2}.
+    appartenere all'insieme {0, ..., max_preferences_per_gender}.
     """
 
     if not (
@@ -959,6 +1003,7 @@ def verify_r5(
     public_key: int,
     params: GroupParameters,
     context: int,
+    check_membership: bool = True,
 ) -> bool:
     """
     Verifica la prova R5 per un singolo genere.
@@ -978,4 +1023,5 @@ def verify_r5(
         public_key=public_key,
         params=params,
         context=context,
+        check_membership=check_membership,
     )

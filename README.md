@@ -98,7 +98,7 @@ La bacheca rifiuta le schede identiche a una già pubblicata: senza questo contr
 
 ### Scrutinio
 
-Lo scrutinio segue una versione semplificata e dichiarata della legge elettorale: soglie di sbarramento per liste e coalizioni, premio di governabilità, riparto con il metodo dei quozienti interi e dei più alti resti, distribuzione dei seggi tra le circoscrizioni ed eletti per capolista e preferenze. Tutti i parametri sono nel file di configurazione, quindi cambiare legge significa cambiare il file e non il codice. Il procedimento completo è nella sezione 46 della [specifica](docs/spec_f1.md).
+Lo scrutinio segue una versione semplificata e dichiarata della legge elettorale: soglie di sbarramento per liste e coalizioni, premio di governabilità, riparto con il metodo dei quozienti interi e dei più alti resti, distribuzione dei seggi tra le circoscrizioni ed eletti per capolista e preferenze. Tutti i parametri sono nel file di configurazione, quindi cambiare legge significa cambiare il file e non il codice. Ogni lista deve presentare in tutto almeno tanti candidati quanti sono i seggi, così ogni seggio vinto ha qualcuno da eleggere. Il procedimento completo è nella sezione 46 della [specifica](docs/spec_f1.md).
 
 ## Stato del progetto
 
@@ -141,7 +141,8 @@ eVoto è utilizzabile come **libreria Python**, con la demo da riga di comando `
 - [x] Esperimenti E2 (garanti assenti) ed E5 (costi e tempi per scheda)
 - [x] Notebook didattico con numeri piccoli
 - [x] Cabina elettorale web e bacheca dimostrativa, con il verificatore integrato
-- [ ] Verificatore lanciabile da riga di comando sul file del registro
+- [x] Verificatore lanciabile da riga di comando sul file del registro
+- [x] Revisione completa del progetto (sezione 53 della specifica)
 
 ## Installazione
 
@@ -294,14 +295,14 @@ Il modo più veloce per vedere un'elezione completa è la demo:
 uv run python demo.py
 ```
 
-La demo usa la configurazione `config/elezione_esempio.json`: tre circoscrizioni, otto liste (sei in due coalizioni e due singole) e 30 seggi. Cento elettori per circoscrizione scelgono a caso lista e preferenze, alcuni sprecano una scheda per controllare il dispositivo, e al termine il risultato cifrato viene confrontato con un conteggio in chiaro delle stesse scelte:
+La demo usa la configurazione `config/elezione_esempio.json`: tre circoscrizioni, otto liste (sei in due coalizioni e due singole) e 15 seggi. Cento elettori per circoscrizione scelgono a caso lista e preferenze, alcuni sprecano una scheda per controllare il dispositivo, e al termine il risultato cifrato viene confrontato con un conteggio in chiaro delle stesse scelte:
 
 ```text
-Riparto di 30 seggi
-  Coalizione Alfa    141 voti   17 seggi  <- premio
-  Coalizione Beta     97 voti    8 seggi
-  Lista C             41 voti    4 seggi
-  Lista H             15 voti    1 seggio
+Riparto di 15 seggi
+  Coalizione Alfa    141 voti    9 seggi  <- premio
+  Coalizione Beta     97 voti    4 seggi
+  Lista C             41 voti    2 seggi
+  Lista H             15 voti    0 seggi
 ...
 Confronto con il conteggio in chiaro
   totali per circoscrizione: coincidono
@@ -313,7 +314,7 @@ Confronto con il conteggio in chiaro
 | `--elettori` | elettori per circoscrizione | 100 |
 | `--garanti` | numero di garanti | 5 |
 | `--quorum` | garanti necessari per decifrare | 3 |
-| `--presenti` | garanti presenti allo spoglio | `1,3,5` |
+| `--presenti` | garanti presenti allo spoglio | `1,3,5`, oppure i primi `quorum` garanti |
 | `--seme` | seme delle scelte casuali degli elettori | 2026 |
 | `--config` | file di configurazione | `config/elezione_esempio.json` |
 
@@ -421,7 +422,7 @@ Poi si apre <http://127.0.0.1:8000>. All'avvio vengono eseguite la cerimonia del
 | `--elettori N` | elettori simulati per circoscrizione (default 10) |
 | `--garanti N`, `--quorum K` | garanti della cerimonia e garanti necessari per decifrare (default 5 e 3) |
 | `--porta N` | porta del server (default 8000) |
-| `--registro FILE` | file in cui scrivere il registro pubblico alla chiusura |
+| `--registro FILE` | file in cui scrivere il registro pubblico alla chiusura, da controllare con `uv run python -m verifica FILE` |
 | `--config FILE`, `--seme N` | configurazione dell'elezione e seme degli elettori simulati |
 
 Con il gruppo da 2048 bit una scheda si cifra e si deposita in circa un secondo. Il verificatore impiega da mezzo secondo a un secondo per scheda, a seconda della macchina: con i 30 elettori simulati di default la verifica dura tra 15 e 30 secondi.
@@ -488,6 +489,23 @@ Output atteso:
 
 Il voto aggiunto non corrisponde più alla decifratura del totale (V7) e cambia il risultato dello scrutinio (V8).
 
+Lo stesso controllo si lancia dal terminale su un registro salvato in un file, per esempio quello scritto dalla cabina con `--registro`:
+
+```bash
+uv run python -m verifica registro.json
+```
+
+```text
+  OK    V1  Parametri del gruppo e chiave pubblica
+  OK    V2  Prove di Schnorr dei garanti, chiave congiunta, Q e Q_bar
+  ...
+  OK    V8  Scrutinio rifatto da zero: soglie, premio, seggi ed eletti
+
+ELEZIONE VERIFICATA
+```
+
+Il codice di uscita vale `0` se l'elezione è verificata, `1` se almeno un controllo fallisce e `2` se il file non si può leggere. Un registro malformato non fa mai fallire il verificatore con un errore: fa fallire i controlli che usano il dato sbagliato.
+
 | Controllo | Cosa verifica |
 |---|---|
 | V1 | Parametri del gruppo e chiave pubblica |
@@ -515,8 +533,10 @@ Gli esperimenti si eseguono dalla radice del repository. Le formule e le scelte 
 
 ```bash
 uv run python -m esperimenti.e2_garanti_assenti
-uv run python -m esperimenti.e2_garanti_assenti --gruppo demo --elettori 10
+uv run python -m esperimenti.e2_garanti_assenti --gruppo demo --elettori 2
 ```
+
+Con `--gruppo demo` ogni gruppo di garanti richiede una verifica completa a 2048 bit: anche con 2 elettori per circoscrizione servono alcuni minuti. `--senza-verificatore` salta la verifica dei registri.
 
 Si esegue una sola elezione simulata (la stessa di `demo.py`), poi i suoi totali cifrati vengono decifrati con ognuno dei 16 gruppi di almeno 3 garanti su 5. Ogni volta si confronta il risultato con il conteggio in chiaro e si passa il registro al verificatore indipendente. Con 2 soli garanti la decifratura viene rifiutata.
 
@@ -546,13 +566,13 @@ Ogni misura cifra e verifica schede vere con `prepare_ballot` e `verify_ballot`;
 
 | Configurazione | Dimensione | Cifratura | Verifica |
 |---|---|---|---|
-| `p` da 4096 bit, con gli impegni delle prove, Python puro | 0,48 MB | 27 s | 39 s |
-| `p` da 4096 bit, forma compatta, `gmpy2` | 0,12 MB | 1,5 s | 2,0 s |
-| `p` da 2048 bit e `q` da 256 bit, forma compatta, `gmpy2` | 0,07 MB | 0,4 s | 0,6 s |
+| `p` da 4096 bit, con gli impegni delle prove, Python puro | 0,48 MB | 27 s | 23 s |
+| `p` da 4096 bit, forma compatta, `gmpy2` | 0,12 MB | 1,4 s | 1,2 s |
+| `p` da 2048 bit e `q` da 256 bit, forma compatta, `gmpy2` | 0,07 MB | 0,4 s | 0,4 s |
 
-Nella forma compatta le prove contengono solo sfide e risposte, perché gli impegni si ricalcolano; il nostro registro pubblica anche gli impegni (0,25 MB a 2048 bit). Le dimensioni coincidono con le stime della proposta di progetto. La verifica esegue circa 3.000 esponenziazioni, contro le circa 1.000 della stima, e 1.231 di queste controllano che ogni elemento ricevuto appartenga al sottogruppo (`x^q = 1`). `gmpy2` è da 8 a 20 volte più veloce di `pow()`, a seconda della macchina.
+Nella forma compatta le prove contengono solo sfide e risposte, perché gli impegni si ricalcolano; il nostro registro pubblica anche gli impegni (0,25 MB a 2048 bit). Le dimensioni coincidono con le stime della proposta di progetto. La verifica esegue circa 1.950 esponenziazioni, contro le circa 1.000 della stima: l'appartenenza al sottogruppo (`x^q = 1`) si controlla una volta per la chiave e per ciascuno dei 182 elementi dei cifrati, perché per gli impegni delle prove e per i cifrati derivati è implicata dalle equazioni. Prima della revisione i controlli erano 1.231 e la verifica richiedeva 2.996 esponenziazioni. `gmpy2` è da 8 a 20 volte più veloce di `pow()`, a seconda della macchina.
 
-Su una circoscrizione di un milione di elettori, con il gruppo da 2048 bit, la bacheca occupa circa 70 GB in forma compatta e la verifica di tutte le schede richiede circa 165 ore su un core. Le schede si verificano in modo indipendente, quindi il lavoro si divide tra più core. Il conteggio omomorfico richiede circa 45 minuti, la decifratura di tutti i totali pochi secondi: il costo è dominato dalla verifica delle singole schede.
+Su una circoscrizione di un milione di elettori, con il gruppo da 2048 bit, la bacheca occupa circa 70 GB in forma compatta e la verifica di tutte le schede richiede circa 100 ore su un core. Le schede si verificano in modo indipendente, quindi il lavoro si divide tra più core. Il conteggio omomorfico richiede circa 45 minuti, la decifratura di tutti i totali pochi secondi: il costo è dominato dalla verifica delle singole schede.
 
 ## Notebook didattico
 
@@ -595,7 +615,8 @@ evoto-cryptography/
 │   ├── scrutinio.py            # seggi ed eletti
 │   └── simulazione.py          # elezione simulata (esperimento E1)
 ├── verifica/
-│   └── verifica.py             # verificatore indipendente V1-V8 (non importa evoto)
+│   ├── verifica.py             # verificatore indipendente V1-V8 (non importa evoto)
+│   └── __main__.py             # uv run python -m verifica registro.json
 ├── esperimenti/
 │   ├── e2_garanti_assenti.py   # esperimento E2: garanti assenti
 │   └── e5_costi.py             # esperimento E5: dimensione e tempi per scheda
@@ -749,6 +770,8 @@ I test comprendono:
 - test di integrazione del referendum, dalla cerimonia delle chiavi al risultato;
 - test di integrazione di un'elezione politica completa (`test_elezione.py`), confrontata con il conteggio in chiaro;
 - test del registro pubblico (`test_registro.py`) e del verificatore indipendente (`test_verifica.py`), comprese le manomissioni mirate dell'esperimento E3 e i client scorretti dell'esperimento E4;
+- il verificatore da riga di comando (`test_verifica_cli.py`) e le opzioni di `demo.py` (`test_demo.py`);
+- i casi trovati nella revisione del progetto (`test_revisione.py`): circoscrizione senza preferenze, schede e registri malformati, scheda con una lista in più, controlli di appartenenza fatti una sola volta;
 - un test completo con i parametri a 2048 bit, dalla simulazione al registro fino alla verifica V1–V8;
 - test degli esperimenti E2 ed E5 (`test_esperimento_e2.py`, `test_esperimento_e5.py`), con i casi piccoli calcolati a mano;
 - l'esecuzione di tutte le celle del notebook didattico (`test_notebook.py`);

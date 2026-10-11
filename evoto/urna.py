@@ -728,13 +728,26 @@ def decrypt_district_tally(
 
     secret_shares contiene le share dei garanti simulati: in un sistema
     reale ogni garante calcolerebbe la propria share sul suo computer.
+
+    Il quorum deve essere quello della cerimonia, cioè il numero di
+    impegni di ogni garante: con un quorum più basso la combinazione di
+    Lagrange darebbe un valore sbagliato senza accorgersene.
     """
 
     if len(set(present_guardians)) != len(present_guardians):
         raise ValueError("Un garante non può comparire due volte.")
 
+    if any(len(record.commitments) != quorum for record in records):
+        raise ValueError(
+            "Il quorum non coincide con quello della cerimonia delle chiavi."
+        )
+
     if len(present_guardians) < quorum:
         raise ValueError("I garanti presenti sono meno del quorum.")
+
+    for index in present_guardians:
+        if index not in secret_shares:
+            raise ValueError(f"Il garante {index} non esiste.")
 
     verification_keys = {
         index: compute_verification_key(index, records, params)

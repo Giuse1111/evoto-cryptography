@@ -556,12 +556,23 @@ def verify_value_in_set(
     public_key: int,
     params: GroupParameters,
     context: int,
+    check_membership: bool = True,
 ) -> bool:
     """
     Verifica una prova OR.
 
     Il verificatore non conosce quale ramo sia quello reale.
     Controlla quindi tutti i rami allo stesso modo.
+
+    Degli impegni basta controllare che siano interi in [1, p - 1]:
+    se g^z = a * alpha^c e alpha sta nel sottogruppo, anche a ci sta,
+    e lo stesso vale per b con K e beta. Per questo l'appartenenza al
+    sottogruppo si controlla solo per K, alpha e beta.
+
+    Con check_membership=False il chiamante garantisce di aver già
+    controllato K, alpha e beta: serve a verify_ballot, che controlla
+    una volta sola K e i ciphertext della scheda e poi verifica anche
+    i ciphertext derivati, prodotti di elementi già controllati.
     """
 
     if not allowed_values:
@@ -570,16 +581,28 @@ def verify_value_in_set(
     if len(set(allowed_values)) != len(allowed_values):
         return False
 
+    if any(value < 0 for value in allowed_values):
+        return False
+
     if len(proof.branches) != len(allowed_values):
         return False
 
-    if not is_subgroup_element(public_key, params):
-        return False
+    group_values = (
+        public_key,
+        ciphertext.alpha,
+        ciphertext.beta,
+    )
 
-    if not is_subgroup_element(ciphertext.alpha, params):
-        return False
-
-    if not is_subgroup_element(ciphertext.beta, params):
+    if check_membership:
+        if not all(
+            is_subgroup_element(value, params)
+            for value in group_values
+        ):
+            return False
+    elif not all(
+        0 < value < params.p
+        for value in group_values
+    ):
         return False
 
     hash_values = [
@@ -594,16 +617,12 @@ def verify_value_in_set(
         allowed_values,
         proof.branches,
     ):
-        if not is_subgroup_element(
-            branch.commitment_1,
-            params,
-        ):
+        # L'appartenenza al sottogruppo degli impegni segue dalle
+        # equazioni di verifica: basta che siano in [1, p - 1].
+        if not 0 < branch.commitment_1 < params.p:
             return False
 
-        if not is_subgroup_element(
-            branch.commitment_2,
-            params,
-        ):
+        if not 0 < branch.commitment_2 < params.p:
             return False
 
         if not 0 <= branch.challenge < params.q:

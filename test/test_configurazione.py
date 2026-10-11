@@ -32,12 +32,15 @@ def small_config_data() -> dict:
     """
     Configurazione minima: due liste in coalizione, una singola,
     una circoscrizione.
+
+    La Lista B ha solo il capolista, quindi i seggi sono uno solo:
+    ogni lista deve avere almeno tanti candidati quanti sono i seggi.
     """
 
     return {
         "name": "Test",
         "election_id": 5,
-        "seats": 10,
+        "seats": 1,
         "rules": {
             "max_preferences": 3,
             "max_preferences_per_gender": 2,
@@ -82,7 +85,7 @@ def test_example_config_is_valid():
     config = load_election_config(EXAMPLE_PATH)
 
     assert config.election_id == 1
-    assert config.seats == 30
+    assert config.seats == 15
     assert len(config.list_names) == 8
     assert len(config.districts) == 3
 
@@ -302,3 +305,55 @@ def test_layout_rejects_unknown_district():
 
     with pytest.raises(ValueError):
         build_ballot_layout(config, 1)
+
+
+def test_rejects_lists_with_fewer_candidates_than_seats():
+    """
+    Con 2 seggi la Lista B, che ha solo il capolista, non potrebbe
+    coprire tutti i seggi vinti: la configurazione è rifiutata.
+
+    Nell'esempio ogni lista ha 5 candidati in 3 circoscrizioni,
+    cioè 15, quanti i seggi.
+    """
+
+    data = small_config_data()
+    data["seats"] = 2
+
+    with pytest.raises(ValueError, match="Lista B"):
+        parse_election_config(data)
+
+    config = load_election_config(EXAMPLE_PATH)
+
+    for list_index in range(len(config.list_names)):
+        total = sum(
+            len(district.candidates[list_index])
+            for district in config.districts
+        )
+
+        assert total >= config.seats
+
+
+def test_genders_are_normalized():
+    """
+    "m" e " M " sono lo stesso genere per il vincolo R5.
+    """
+
+    data = small_config_data()
+    data["districts"][0]["candidates"]["Lista A"][2]["gender"] = " m "
+
+    config = parse_election_config(data)
+
+    assert config.districts[0].candidates[0][2].gender == "M"
+
+
+def test_rejects_gender_limit_above_preference_limit():
+    """
+    Il limite per genere non può superare il numero di preferenze.
+    """
+
+    data = small_config_data()
+    data["rules"]["max_preferences"] = 1
+    data["rules"]["max_preferences_per_gender"] = 2
+
+    with pytest.raises(ValueError):
+        parse_election_config(data)
