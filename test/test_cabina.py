@@ -158,11 +158,17 @@ def test_cast_gives_a_tracking_code(election):
 
     assert entry in found
 
-    with pytest.raises(ValueError):
-        election.cast(pending.token)
+    # Un secondo deposito con lo stesso token (doppio clic, pagina
+    # ricaricata) restituisce la stessa ricevuta senza votare di nuovo.
+    assert election.cast(pending.token) == entry
+    assert election.receipt(pending.token) == entry
+    assert len(election.board.entries) == entry.sequence
 
     with pytest.raises(ValueError):
         election.prepare("NORD-01", VoterChoice(list_index=0))
+
+    with pytest.raises(ValueError):
+        election.receipt("sconosciuto")
 
 
 def test_spoil_reveals_the_choice_and_allows_a_new_vote(election):
@@ -172,17 +178,36 @@ def test_spoil_reveals_the_choice_and_allows_a_new_vote(election):
     """
 
     choice = VoterChoice(list_index=1, preferences=(4, 5))
-    report = election.spoil(election.prepare("NORD-02", choice).token)
+    token = election.prepare("NORD-02", choice).token
+    report = election.spoil(token)
 
     assert report.entry.state == SPOILED
+    assert report.voter_id == "NORD-02"
     assert report.matches_choice
     assert report.reencrypts
     assert report.decoded == "Lista B; preferenze: Bruno E., Costa D."
+
+    # La stessa sfida ripetuta non pubblica una seconda scheda.
+    assert election.spoil(token) == report
+    assert election.spoil_report(token) == report
 
     entry = election.cast(election.prepare("NORD-02", choice).token)
 
     assert entry.sequence == report.entry.sequence + 1
     assert election.board_is_valid()
+
+
+def test_spoil_after_voting_is_rejected(election):
+    """
+    Una scheda preparata ma non usata non si può sfidare dopo che
+    l'elettore ha già depositato un'altra scheda.
+    """
+
+    old = election.prepare("NORD-03", VoterChoice(list_index=0))
+    election.cast(election.prepare("NORD-03", VoterChoice(list_index=0)).token)
+
+    with pytest.raises(ValueError, match="ha già votato"):
+        election.spoil(old.token)
 
 
 def test_invalid_choice_cannot_be_proved(election):
@@ -342,8 +367,11 @@ def test_web_flow(election, tmp_path):
     registry_path = tmp_path / "registro.json"
     client = create_app(election, registry_path=registry_path).test_client()
 
-    for page in ("/", "/cabina", "/bacheca", "/spoglio", "/risultati", "/verifica"):
+    for page in ("/", "/prepara", "/cabina", "/bacheca", "/spoglio", "/verifica"):
         assert client.get(page).status_code == 200
+
+    # I risultati ora sono nella pagina dello spoglio.
+    assert client.get("/risultati").headers["Location"].endswith("/spoglio")
 
     response = client.post("/cabina", data={"codice": "nord-05"})
 
@@ -360,9 +388,14 @@ def test_web_flow(election, tmp_path):
     ).get_data(as_text=True)
 
     token = re.search(r"/scheda/([^/]+)/sfida", page).group(1)
-    page = client.post(f"/scheda/{token}/sfida").get_data(as_text=True)
+    response = client.post(f"/scheda/{token}/sfida")
+
+    assert response.headers["Location"].endswith(f"/sfida/{token}")
+
+    page = client.get(f"/sfida/{token}").get_data(as_text=True)
 
     assert "Lista B; preferenze: Bruno E." in page
+    assert "Vota di nuovo come NORD-05" in page
 
     page = client.post(
         "/cabina/NORD-05",
@@ -370,7 +403,17 @@ def test_web_flow(election, tmp_path):
     ).get_data(as_text=True)
 
     token = re.search(r"/scheda/([^/]+)/deposita", page).group(1)
-    page = client.post(f"/scheda/{token}/deposita").get_data(as_text=True)
+    response = client.post(f"/scheda/{token}/deposita")
+
+    assert response.headers["Location"].endswith(f"/ricevuta/{token}")
+
+    # Doppio clic sul deposito: stessa ricevuta, nessuna scheda in più.
+    entries = len(election.board.entries)
+    client.post(f"/scheda/{token}/deposita")
+
+    assert len(election.board.entries) == entries
+
+    page = client.get(f"/ricevuta/{token}").get_data(as_text=True)
 
     assert "Scheda depositata" in page
 
@@ -378,26 +421,53 @@ def test_web_flow(election, tmp_path):
     short = format_code(entry.tracking_code, TEST_PARAMS, short=True)
     page = client.get("/bacheca", query_string={"codice": short}).get_data(as_text=True)
 
-    assert f"Codice trovato in posizione {entry.sequence}" in page
+    assert f'la scheda è in posizione\n      <a href="#riga-{entry.sequence}">' in page
 
-    page = client.post("/cabina/NORD-06", data={"lista": "1", "preferenze": ["0"]}).get_data(
-        as_text=True
-    )
+    # Un codice copiato con i puntini di sospensione si trova lo stesso.
+    page = client.get("/bacheca", query_string={"codice": short + "…"}).get_data(as_text=True)
+
+    assert f"#riga-{entry.sequence}" in page
+
+    page = client.get("/bacheca", query_string={"codice": "1"}).get_data(as_text=True)
+
+    assert "Scrivi almeno 3 cifre del codice" in page
+
+    page = client.post(
+        "/cabina/NORD-06",
+        data={"lista": "1", "preferenze": ["0"], "scorretto": "1"},
+    ).get_data(as_text=True)
 
     assert "R3" in page
 
-    page = client.post("/spoglio", data={"garanti": ["1", "2"]}).get_data(as_text=True)
+    # La scheda torna con le scelte fatte e il dispositivo scorretto attivo.
+    assert re.search(r'name="lista" value="1"\s+checked', page)
+    assert re.search(r'value="0"\s+data-list="0" data-gender="M"\s+checked', page)
+    assert re.search(r'id="scorretto" name="scorretto" value="1" checked', page)
+
+    page = client.post(
+        "/spoglio",
+        data={"garanti": ["1", "2"], "conferma": "1"},
+    ).get_data(as_text=True)
 
     assert "Servono almeno 3 garanti" in page
 
-    response = client.post("/spoglio", data={"garanti": ["1", "3", "5"]})
+    page = client.post("/spoglio", data={"garanti": ["1", "3", "5"]}).get_data(as_text=True)
+
+    assert "Spunta la conferma" in page
+    assert election.phase != CLOSED
+
+    response = client.post(
+        "/spoglio",
+        data={"garanti": ["1", "3", "5"], "conferma": "1"},
+    )
 
     assert response.status_code == 302
     assert registry_path.exists()
 
-    page = client.get("/risultati").get_data(as_text=True)
+    page = client.get("/spoglio").get_data(as_text=True)
 
     assert "assenti: 2, 4" in page
+    assert "Verifica l'elezione</a>" in page
 
     page = client.post("/verifica", data={"manomissione": ""}).get_data(as_text=True)
 
