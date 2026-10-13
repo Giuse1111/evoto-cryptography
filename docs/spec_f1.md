@@ -1,6 +1,6 @@
 # eVoto — Specifica tecnica condivisa F1
 
-**Versione:** 0.7  
+**Versione:** 0.8  
 **Progetto:** Voto elettronico verificabile per elezioni politiche  
 **Corso:** Crittografia — LM Sicurezza Informatica, Università degli Studi di Milano  
 **Componenti del gruppo:**
@@ -2156,7 +2156,7 @@ lista degli aventi diritto (VoterRoll)
 
 ---
 
-# 48. Stato del progetto (v0.7)
+# 48. Stato del progetto (v0.8)
 
 ```text
 F0 ambiente e repository                          completata
@@ -2166,7 +2166,7 @@ F3 garanti e decifratura a soglia                 completata (B)
 F4 scheda politica e prove R1-R5                  completata (A)
 F5 configurazione, voto, bacheca, scrutinio, E1   completata (B)
 F6 verificatore indipendente, E3, E4              completata (A)
-F7 cabina web, notebook, misure                   completata (B); resta il comando del verificatore (A)
+F7 cabina web, notebook, misure, comando verifica completata (B)
 ```
 
 Esperimento E1: `demo.py` esegue un'elezione simulata sulla configurazione di esempio e confronta il risultato cifrato con un conteggio in chiaro; `test/test_elezione.py` esegue lo stesso controllo in forma automatizzata.
@@ -2220,7 +2220,7 @@ Persona B:
 - tesina (F8): capitoli 4 (protocollo ed esempio a numeri piccoli), 6 (implementazione) e 8 (esperimenti E1-E5);
 - prova della demo all'esame (F9) con la cabina.
 
-Gli esperimenti E2 ed E5 (sezione 50), il notebook didattico (sezione 51) e la cabina elettorale web (sezione 52) di Persona B sono completati. La revisione completa del progetto è descritta nella sezione 53.
+Gli esperimenti E2 ed E5 (sezione 50), il notebook didattico (sezione 51) e la cabina elettorale web (sezione 52) di Persona B sono completati. La revisione completa del progetto è descritta nella sezione 53; dalla v0.8 la cabina è un sito guidato, con simulazioni configurabili dal browser (sezione 52).
 
 ---
 
@@ -2235,6 +2235,7 @@ Gli esperimenti E2 ed E5 (sezione 50), il notebook didattico (sezione 51) e la c
 | 0.5 | Chiusura F6: registro pubblico JSON completo; parser e verificatore indipendente V1-V8; verifica cast-or-spoil e rilevamento duplicati; test E3 di manomissione ed E4 sui client non validi; T4 completato contro ElectionGuard; parametri demo MODP 2048/256 bit; test end-to-end del registro con `DEMO_PARAMS`; ottimizzazione delle esponenziazioni modulari del verificatore tramite `gmpy2.powmod` |
 | 0.6 | F7: esperimenti E2 (garanti assenti) ed E5 (costi di una scheda), sezione 50; notebook didattico, sezione 51; cabina elettorale web con verificatore integrato, sezione 52 |
 | 0.7 | Revisione completa (sezione 53): vincolo candidati/seggi ed esempio a 15 seggi; controlli di appartenenza una sola volta per scheda; V3 controlla il numero di liste; verificatore robusto ai registri malformati; comando `python -m verifica`; quorum della cerimonia e K diverso da 1 |
+| 0.8 | Cabina guidata (sezione 52): panoramica per chi usa la demo, menu a passi, pagina «Prepara» con simulazioni configurabili e preparazione in background, spoglio e risultati in un'unica pagina, ricevuta e sfida idempotenti, registro non scrivibile segnalato |
 
 ---
 
@@ -2370,47 +2371,79 @@ La prima cella aggiunge agli import la radice del repository, perché il progett
 
 # 52. Cabina elettorale web (F7)
 
-Cartella: `cabina/` (Persona B). Test: `test/test_cabina.py`. Dipendenza: Flask.
+Cartella: `cabina/` (Persona B). Test: `test/test_cabina.py`, `test/test_preparazione.py`. Dipendenza: Flask.
 
 ```text
 uv run python -m cabina [--gruppo demo|didattico] [--elettori N] [--garanti N] [--quorum K]
                         [--porta N] [--registro FILE] [--config FILE] [--seme N]
 ```
 
-Default: gruppo `DEMO_PARAMS`, 10 elettori simulati per circoscrizione, 5 garanti, quorum 3, porta 8000. Il server di sviluppo di Flask ascolta solo su `127.0.0.1`.
+Default: gruppo `DEMO_PARAMS` (modalità realistica), 10 elettori simulati per circoscrizione, 5 garanti, quorum 3, porta 8000. Le opzioni descrivono la prima simulazione, preparata prima di avviare il server; valgono gli stessi limiti della pagina «Prepara» e il percorso di `--registro` si controlla all'avvio. Il server di sviluppo di Flask ascolta solo su `127.0.0.1`.
 
 ## Struttura
 
 | File | Contenuto |
 |---|---|
-| `sessione.py` | `ElectionSession`: tutta la logica della demo, senza Flask |
-| `app.py` | `create_app(election, registry_path)`: le pagine leggono e mostrano lo stato della sessione |
+| `sessione.py` | `ElectionSession`: tutta la logica di un'elezione dimostrativa, senza Flask |
+| `preparazione.py` | `SimulationSettings`, modalità e tendenze di voto, `DemoHost`: conserva l'elezione servita e ne prepara di nuove in background (v0.8) |
+| `app.py` | `create_app(host, registry_path)`: le pagine leggono e mostrano lo stato; `host` è un `DemoHost` oppure, per comodità, una `ElectionSession` già pronta |
 | `templates/`, `static/` | HTML, CSS e JavaScript dell'interfaccia |
-| `__main__.py` | opzioni della riga di comando, cerimonia, elettori simulati, avvio del server |
+| `__main__.py` | opzioni della riga di comando, prima simulazione, avvio del server |
 
 ## Stato della sessione
 
-All'avvio `ElectionSession` esegue `run_key_ceremony`, costruisce i layout delle circoscrizioni, crea la bacheca e la lista degli aventi diritto con i codici dimostrativi (`NORD-01` ... `NORD-10`, uno per elettore che vota dal browser). `prefill` aggiunge agli aventi diritto gli elettori simulati, che votano con `random_choice` e lo stesso percorso del browser; circa uno su venti spreca prima una scheda.
+All'avvio `ElectionSession` esegue `run_key_ceremony`, costruisce i layout delle circoscrizioni, crea la bacheca e la lista degli aventi diritto con i codici dimostrativi (`NORD-01` ... `NORD-10`, uno per elettore che vota dal browser). `prefill` aggiunge agli aventi diritto gli elettori simulati, che votano con `random_choice` e lo stesso percorso del browser; i pesi delle liste, le schede bianche e la probabilità di sprecare prima una scheda sono parametri. `prefill` misura anche il tempo medio di una scheda (`seconds_per_ballot`), usato per stimare le simulazioni successive.
 
 Lo stato cambia nel tempo, quindi la sessione è una classe; le strutture di `evoto` restano immutabili e vengono sostituite a ogni passo. Un `RLock` protegge lo stato, perché il server serve più richieste insieme. Le share segrete dei garanti simulati restano in `KeyCeremony.secret_shares` e non vengono mai pubblicate.
 
 | Operazione | Funzioni della libreria | Note |
 |---|---|---|
 | `prepare(voter, choice)` | `prepare_ballot` | la scheda cifrata attende la decisione dell'elettore con un token casuale; se la scelta viola R3-R5 le prove non si costruiscono e il messaggio indica la regola |
-| `cast(token)` | `cast_voter_ballot` | la bacheca verifica le prove; l'elettore riceve il codice di tracciamento |
-| `spoil(token)` | `spoil_ballot`, `verify_spoiled_ballot` | sfida di Benaloh: voti e nonce pubblicati, scheda non contata, l'elettore vota di nuovo |
-| `find_entries(text)` | `BulletinBoard.entries` | ricerca per prime cifre del codice (almeno 4, o tutto il codice nel gruppo didattico) |
-| `close(present)` | `tally_district`, `decrypt_district_tally`, `run_scrutiny` | con meno di `quorum` garanti la chiusura è rifiutata e l'elezione resta aperta |
+| `cast(token)`, `receipt(token)` | `cast_voter_ballot` | la bacheca verifica le prove; l'elettore riceve il codice di tracciamento. Un secondo deposito con lo stesso token restituisce la stessa ricevuta (v0.8) |
+| `spoil(token)`, `spoil_report(token)` | `spoil_ballot`, `verify_spoiled_ballot` | sfida di Benaloh: voti e nonce pubblicati, scheda non contata, l'elettore vota di nuovo. La sfida ripetuta restituisce lo stesso esito; una scheda di un elettore che ha già votato non si può sfidare (v0.8) |
+| `find_entries(text)` | `BulletinBoard.entries` | ricerca per prime cifre del codice (almeno 4, o tutto il codice nel gruppo didattico); spazi, trattini e puntini vengono ignorati |
+| `close(present)` | `tally_district`, `decrypt_district_tally`, `run_scrutiny` | con meno di `quorum` garanti, o senza voti validi, la chiusura è rifiutata e l'elezione resta aperta; `default_present_guardians()` propone 1, 3 e 5 oppure i primi `quorum` garanti |
 | `registry_json(tampering)` | `public_registry_to_json` | solo dopo la chiusura |
-| `verify(tampering)` | `verify_public_registry` | l'esito sul registro originale viene ricordato |
+| `verify(tampering)` | `verify_public_registry` | l'esito sul registro originale viene ricordato (`clean_verification`) |
 
 Codici e impronte si mostrano in esadecimale maiuscolo, con la lunghezza di `q`, a gruppi di quattro cifre.
+
+## Preparazione delle simulazioni (v0.8)
+
+La pagina «Prepara» cambia solo il modo di votare: la struttura dell'elezione (liste, coalizioni, candidati, seggi) resta quella del file di configurazione.
+
+| Scelta | Valori |
+|---|---|
+| Modalità | `realistica`: `DEMO_PARAMS`, da 0 a 20 elettori per circoscrizione; `veloce`: `TEST_PARAMS`, da 0 a 200 |
+| Tendenza di voto | `in_testa`: le liste della prima coalizione hanno insieme il 47% del peso; `testa_a_testa`: le prime due coalizioni il 37% ciascuna; `equilibrato`: pesi uguali; `casuale`: pesi in [0,5; 3] fissati dal seme. Il resto del peso si divide in parti uguali tra le altre liste; senza coalizioni le prime liste fanno da gruppi |
+| Schede bianche | da 0 a 20% |
+| Sfide del dispositivo | da 0 a 30% |
+| Garanti e quorum | 3 e 2, 5 e 3, 7 e 4 (dalla riga di comando da 1 a 9) |
+| Seme | intero non negativo |
+
+`DemoHost.prepare(settings)` controlla le scelte e avvia un thread che esegue la cerimonia e `prefill`; `PreparationStatus` riporta fase (`cerimonia`, `voto`, `pronta`, `errore`), elettori fatti e totali, stima iniziale e tempo mancante. Si prepara una sola simulazione alla volta. Quando è pronta sostituisce la precedente; se fallisce, la precedente resta disponibile e la pagina mostra l'errore. La stima della durata è `elettori · circoscrizioni · (1 + sfide) · secondi per scheda`, con la velocità misurata dall'ultima simulazione della stessa modalità.
+
+## Pagine
+
+| Indirizzo | Contenuto |
+|---|---|
+| `/` | panoramica per chi usa la demo: garanzie del sistema, passi della prova, esperimenti da provare, glossario, simulazione attuale e azione consigliata |
+| `/prepara` | 1. scelte della simulazione con la durata stimata; durante la preparazione, pagina di avanzamento |
+| `/stato` | avanzamento della preparazione in JSON, letto dalla pagina di avanzamento |
+| `/cabina`, `/cabina/<codice>` | 2. scelta dell'elettore e scheda; dopo un errore la scheda torna con le scelte fatte |
+| `/scheda/<token>/deposita`, `/scheda/<token>/sfida` | deposito o sfida, poi reindirizzamento a `/ricevuta/<token>` o `/sfida/<token>` |
+| `/bacheca` | 3. bacheca pubblica e ricerca del codice |
+| `/spoglio` | 4. garanti presenti e conferma della chiusura; dopo la chiusura, voti, premio, seggi ed eletti (`/risultati` rimanda qui) |
+| `/verifica` | 5. verificatore, manomissioni dimostrative, comando da terminale e registro da scaricare |
+| `/registro.json` | registro pubblico, anche nelle versioni manomesse |
+
+Mentre una simulazione si prepara, o se non ce n'è nessuna, le pagine dell'elezione rimandano a `/prepara`; la panoramica resta sempre disponibile.
 
 ## Registro pubblico
 
 `build_public_registry` legge del resoconto soltanto `config`, `ceremony`, `board`, `tallies`, `results` e `scrutiny`. La cabina passa un `PublicElectionRecord` con questi campi; `registro.py` non viene modificato. L'annotazione `SimulationReport` della funzione potrebbe diventare un protocollo con gli stessi campi (Persona A).
 
-Con `--registro FILE` il registro viene scritto anche su disco alla chiusura; la pagina `/registro.json` lo offre da scaricare, anche nelle versioni manomesse.
+Con `--registro FILE` il registro viene scritto anche su disco alla chiusura. Se la scrittura non riesce, l'elezione si chiude lo stesso e le pagine dello spoglio e della verifica lo segnalano; il registro si può sempre scaricare da `/registro.json`.
 
 ## Manomissioni dimostrative (E3 dal vivo)
 
@@ -2427,7 +2460,9 @@ Le manomissioni modificano solo il JSON pubblicato, mai lo stato dell'elezione:
 
 ## Interfaccia
 
-Il JavaScript della scheda serve solo alla comodità: una preferenza segna la sua lista, le preferenze di altre liste vengono tolte, i limiti R4 e R5 vengono segnalati. L'opzione «dispositivo scorretto» spegne questi controlli: la scheda viene rifiutata comunque, perché le prove non si costruiscono (E4).
+Il menu a passi (Prepara, Vota, Bacheca, Spoglio e risultati, Verifica) ha una voce per pagina: segna con una spunta i passi fatti e disattiva quelli non ancora disponibili (la verifica prima dello spoglio, tutto tranne «Prepara» durante la preparazione). In fondo a ogni pagina un riquadro indica il passo successivo. Ogni controllo del verificatore è descritto anche a parole.
+
+Il JavaScript serve solo alla comodità: nella scheda una preferenza segna la sua lista, le preferenze di altre liste vengono tolte, i limiti R4 e R5 vengono segnalati; i moduli lenti disattivano i pulsanti dopo il primo clic e mostrano i secondi trascorsi; la pagina «Prepara» aggiorna la stima e la pagina di avanzamento legge `/stato` ogni secondo. L'opzione «dispositivo scorretto» spegne i controlli della scheda: la scheda viene rifiutata comunque, perché le prove non si costruiscono (E4).
 
 Nella demo il programma locale fa da dispositivo di voto e da bacheca, quindi riceve la scelta in chiaro e la cifra. In un sistema reale la cifratura avverrebbe sul dispositivo dell'elettore e la bacheca vedrebbe solo la scheda cifrata con le prove.
 

@@ -121,7 +121,7 @@ eVoto è utilizzabile come **libreria Python**, con la demo da riga di comando `
 | `evoto/registro.py` | Registro pubblico dell'elezione in JSON | Completato |
 | `verifica/` | Verificatore indipendente | Completato: controlli V1–V8 |
 | `esperimenti/` | Esperimenti E2 (garanti assenti) ed E5 (costi) | Completato |
-| `cabina/` | Cabina elettorale, bacheca, spoglio e verifica nel browser (Flask) | Completato: demo locale |
+| `cabina/` | Sito guidato nel browser: preparazione delle simulazioni, cabina, bacheca, spoglio e verifica (Flask) | Completato: demo locale |
 | `notebook/` | Notebook didattico con numeri piccoli | Completato: esempio della sezione 38 della specifica, controllato dai test |
 
 ### Roadmap
@@ -143,6 +143,7 @@ eVoto è utilizzabile come **libreria Python**, con la demo da riga di comando `
 - [x] Cabina elettorale web e bacheca dimostrativa, con il verificatore integrato
 - [x] Verificatore lanciabile da riga di comando sul file del registro
 - [x] Revisione completa del progetto (sezione 53 della specifica)
+- [x] Cabina guidata per chi non ha sviluppato il progetto: panoramica, menu a passi e simulazioni configurabili dal browser
 
 ## Installazione
 
@@ -408,33 +409,36 @@ La scheda sprecata non compare nei totali. Il formato del file di configurazione
 
 ## Cabina elettorale web
 
-La cabina è una demo locale nel browser che percorre l'intera elezione: voto con lista e preferenze, codice di tracciamento sulla bacheca, chiusura con i garanti presenti, seggi ed eletti, verificatore indipendente e registro manomesso.
+La cabina è un sito locale che guida passo per passo nell'intera elezione, pensato anche per chi non conosce la crittografia: si prepara una simulazione, si vota con lista e preferenze, si ritrova la scheda sulla bacheca, si chiude il voto con i garanti presenti e si verifica il risultato, anche su un registro manomesso.
 
 ```bash
 uv run python -m cabina
 ```
 
-Poi si apre <http://127.0.0.1:8000>. All'avvio vengono eseguite la cerimonia delle chiavi (5 garanti, quorum 3) e il voto di 10 elettori simulati per circoscrizione, così la bacheca non parte vuota. Il server ascolta solo sul computer locale.
+Poi si apre <http://127.0.0.1:8000>. All'avvio viene preparata la prima simulazione: cerimonia delle chiavi (5 garanti, quorum 3) e voto di 10 elettori simulati per circoscrizione, così la bacheca non parte vuota. Il server ascolta solo sul computer locale.
+
+La pagina iniziale spiega cosa garantisce il sistema e come si usa la demo, con un glossario delle parole principali. Il menu in alto segue i cinque passi della prova, una voce per pagina, e segna i passi già fatti; in fondo a ogni pagina un riquadro indica il passo successivo.
+
+1. **Prepara.** Si sceglie come votano gli elettori simulati dell'elezione di esempio: modalità realistica (2048 bit, fino a 20 elettori per circoscrizione) o veloce (gruppo didattico, fino a 200), numero di elettori, tendenza di voto (una coalizione in testa, testa a testa, tutte le liste alla pari, a sorpresa), percentuale di schede bianche e di sfide del dispositivo, garanti e quorum (3 e 2, 5 e 3, 7 e 4), seme. La pagina stima la durata e mostra l'avanzamento mentre la simulazione si prepara; liste, coalizioni e candidati restano quelli della configurazione.
+2. **Vota.** Si sceglie un codice dimostrativo (per esempio `NORD-01`) e si segna una lista con fino a tre preferenze. Una preferenza segna da sola la sua lista; l'interfaccia segnala i limiti R4 ed R5. La pagina successiva mostra l'impronta della scheda: si può depositarla oppure sfidare il dispositivo. La sfida di Benaloh pubblica la scheda come scheda di prova con i valori casuali, mostra che contiene proprio la scelta fatta e lascia votare di nuovo. Dopo il deposito l'elettore riceve il codice di tracciamento.
+3. **Bacheca.** Il codice si ritrova sulla bacheca con le sue prime cifre, anche copiato con spazi o puntini; la catena dei codici risulta integra.
+4. **Spoglio e risultati.** Si scelgono i garanti presenti e si conferma la chiusura: con meno del quorum la decifratura è impossibile e il voto resta aperto (E2), altrimenti la stessa pagina mostra voti, premio, seggi ed eletti.
+5. **Verifica.** *Lancia il verificatore* esegue i controlli V1–V8 sul registro pubblico e mostra «ELEZIONE VERIFICATA», con ogni controllo spiegato anche a parole. *Manometti e verifica* altera il registro (un voto, un seggio, una casella cifrata, un codice, una share, una prova di un garante) e indica quali controlli falliscono (E3). Il registro si scarica dalla pagina.
+
+Nella scheda, *Esperimento: dispositivo scorretto* spegne i controlli dell'interfaccia: una preferenza in un'altra lista non riesce a ottenere le prove e la scheda non entra nella bacheca (E4).
 
 | Opzione | Significato |
 |---|---|
-| `--gruppo demo` / `--gruppo didattico` | gruppo da 2048 bit (default) oppure gruppo didattico, istantaneo ma non sicuro |
-| `--elettori N` | elettori simulati per circoscrizione (default 10) |
+| `--gruppo demo` / `--gruppo didattico` | prima simulazione in modalità realistica, a 2048 bit (default), oppure veloce, istantanea ma non sicura |
+| `--elettori N` | elettori simulati per circoscrizione (default 10; al massimo 20 in modalità realistica e 200 in quella veloce) |
 | `--garanti N`, `--quorum K` | garanti della cerimonia e garanti necessari per decifrare (default 5 e 3) |
 | `--porta N` | porta del server (default 8000) |
-| `--registro FILE` | file in cui scrivere il registro pubblico alla chiusura, da controllare con `uv run python -m verifica FILE` |
+| `--registro FILE` | file in cui scrivere il registro pubblico alla chiusura, da controllare con `uv run python -m verifica FILE`; il percorso si controlla all'avvio |
 | `--config FILE`, `--seme N` | configurazione dell'elezione e seme degli elettori simulati |
 
-Con il gruppo da 2048 bit una scheda si cifra e si deposita in circa un secondo. Il verificatore impiega da mezzo secondo a un secondo per scheda, a seconda della macchina: con i 30 elettori simulati di default la verifica dura tra 15 e 30 secondi.
+Le stesse scelte si cambiano poi dalla pagina *Prepara*, senza riavviare il server.
 
-Percorso della demo, in circa cinque minuti:
-
-1. **Cabina.** Si entra con un codice dimostrativo (per esempio `NORD-01`) e si segna una lista con fino a tre preferenze. Una preferenza segna da sola la sua lista; l'interfaccia segnala i limiti R4 ed R5.
-2. **Scheda cifrata.** La pagina mostra l'impronta della scheda: si può depositarla oppure sfidare il dispositivo. La sfida di Benaloh pubblica la scheda come sprecata con i valori casuali, mostra che contiene proprio la scelta fatta e lascia votare di nuovo.
-3. **Ricevuta e bacheca.** Dopo il deposito l'elettore riceve il codice di tracciamento e lo ritrova sulla bacheca, dove la catena dei codici risulta valida.
-4. **Dispositivo scorretto.** Nella scheda, *Esperimento: dispositivo scorretto* spegne i controlli dell'interfaccia: una preferenza in un'altra lista non riesce a ottenere le prove e la scheda non entra nella bacheca (E4).
-5. **Spoglio.** Si scelgono i garanti presenti: con due la decifratura è impossibile, con tre su cinque si ottengono i totali, poi seggi, premio ed eletti (E2).
-6. **Verifica.** *Lancia il verificatore* esegue i controlli V1–V8 sul registro pubblico e mostra «ELEZIONE VERIFICATA». *Manometti e verifica* altera il registro (un voto, un seggio, una casella cifrata, un codice, una share, una prova di un garante) e indica quali controlli falliscono (E3).
+Con il gruppo da 2048 bit una scheda si cifra e si deposita in circa un secondo, e lo spoglio richiede qualche secondo. Il verificatore impiega da mezzo secondo a un secondo per scheda, a seconda della macchina: con i 30 elettori simulati di default la verifica dura tra 15 e 30 secondi. La pagina della verifica mostra la stima prima di lanciarla.
 
 La cabina è solo una vetrina: in questa demo il programma locale fa da dispositivo di voto e da bacheca, quindi riceve la scelta in chiaro e la cifra. La validità delle schede non dipende dall'interfaccia ma dalle prove, che la bacheca e il verificatore controllano sempre.
 
@@ -626,7 +630,8 @@ evoto-cryptography/
 │   └── demo_didattica.ipynb    # il protocollo a numeri piccoli
 ├── cabina/                     # demo web locale (Flask)
 │   ├── sessione.py             # stato dell'elezione dimostrativa, senza Flask
-│   ├── app.py                  # pagine: cabina, bacheca, spoglio, risultati, verifica
+│   ├── preparazione.py         # scelte della simulazione e preparazione in background
+│   ├── app.py                  # pagine: panoramica, prepara, vota, bacheca, spoglio, verifica
 │   ├── templates/, static/     # HTML, CSS e JavaScript dell'interfaccia
 │   └── __main__.py             # avvio con uv run python -m cabina
 ├── test/                       # test unitari, di integrazione e incrociati
@@ -776,6 +781,7 @@ I test comprendono:
 - test degli esperimenti E2 ed E5 (`test_esperimento_e2.py`, `test_esperimento_e5.py`), con i casi piccoli calcolati a mano;
 - l'esecuzione di tutte le celle del notebook didattico (`test_notebook.py`);
 - la cabina web (`test_cabina.py`): voto, sfida di Benaloh, dispositivo scorretto, quorum, manomissioni del registro e percorso completo delle pagine, anche con il gruppo da 2048 bit;
+- la preparazione delle simulazioni e il sito guidato (`test_preparazione.py`): scelte della pagina *Prepara*, tendenze di voto, preparazione in background con la pagina di avanzamento, menu a passi, registro non scrivibile e opzioni della riga di comando;
 - test incrociati con ElectionGuard per verificare la compatibilità di cifratura, hash, prove 0/1 e totali di un'elezione.
 
 ### Test con ElectionGuard
