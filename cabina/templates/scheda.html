@@ -1,19 +1,27 @@
 {% extends "base.html" %}
+{% from "macro.html" import voting_steps %}
 {% block title %}Scheda{% endblock %}
 {% block content %}
-<h1>Circoscrizione {{ district.name }}</h1>
-<p class="lead">
-  Elettore <strong>{{ voter_id }}</strong>. Segna una lista oppure la scheda bianca e, se vuoi,
-  fino a {{ layout.max_preferences }} preferenze per candidati della stessa lista,
-  non più di {{ layout.max_preferences_per_gender }} dello stesso genere.
-  Il capolista è bloccato e non ha preferenza. Una preferenza senza lista vale anche per la lista.
-</p>
+{{ voting_steps("scheda") }}
 
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<h1>Scheda · circoscrizione {{ district.name }}</h1>
+<p class="lead">Elettore <strong>{{ voter_id }}</strong>.</p>
+
+<ul class="rules">
+  <li>Segna <strong>una lista</strong>, oppure la scheda bianca.</li>
+  <li>
+    Se vuoi, dai fino a <strong>{{ layout.max_preferences }} preferenze</strong> a candidati della
+    stessa lista, non più di {{ layout.max_preferences_per_gender }} dello stesso genere.
+  </li>
+  <li>Il capolista è bloccato: non riceve preferenze. Una preferenza senza lista vale anche come voto alla lista.</li>
+</ul>
+
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
 
 <form method="post" id="scheda"
       data-max="{{ layout.max_preferences }}"
-      data-max-gender="{{ layout.max_preferences_per_gender }}">
+      data-max-gender="{{ layout.max_preferences_per_gender }}"
+      data-busy="Cifratura della scheda e costruzione delle prove…">
 
   {% for group in groups %}
     <section class="group">
@@ -23,7 +31,8 @@
           <fieldset class="list-card">
             <legend>
               <label>
-                <input type="radio" name="lista" value="{{ item.index }}">
+                <input type="radio" name="lista" value="{{ item.index }}"
+                       {{ 'checked' if chosen_list == item.index | string }}>
                 <span class="symbol">{{ item.symbol }}</span>
                 {{ item.name }}
               </label>
@@ -32,8 +41,9 @@
             {% for candidate in item.candidates %}
               <label class="candidate">
                 <input type="checkbox" name="preferenze" value="{{ candidate.box }}"
-                       data-list="{{ item.index }}" data-gender="{{ candidate.gender }}">
-                {{ candidate.name }} <span class="gender">{{ candidate.gender }}</span>
+                       data-list="{{ item.index }}" data-gender="{{ candidate.gender }}"
+                       {{ 'checked' if candidate.box | string in chosen_preferences }}>
+                {{ candidate.name }} <span class="gender" title="genere">{{ candidate.gender }}</span>
               </label>
             {% endfor %}
           </fieldset>
@@ -44,24 +54,26 @@
 
   <section class="group">
     <label class="blank">
-      <input type="radio" name="lista" value="bianca"> Scheda bianca
+      <input type="radio" name="lista" value="bianca" {{ 'checked' if chosen_list == 'bianca' }}> Scheda bianca
     </label>
   </section>
 
   <p id="avviso" class="notice" hidden></p>
 
-  <details class="advanced">
+  <div class="submit-row">
+    <button type="submit">Cifra la scheda e prosegui</button>
+    <span class="hint">Nel passo successivo scegli se depositarla o controllare il dispositivo.</span>
+  </div>
+  <p class="busy" hidden></p>
+
+  <details class="advanced" {{ 'open' if faulty }}>
     <summary>Esperimento: dispositivo scorretto</summary>
     <label>
-      <input type="checkbox" id="scorretto">
-      Disattiva i controlli dell'interfaccia. Si possono segnare preferenze in altre liste o
-      troppe preferenze: il dispositivo non riuscirà a costruire le prove e la scheda non
-      potrà entrare nella bacheca.
+      <input type="checkbox" id="scorretto" name="scorretto" value="1" {{ 'checked' if faulty }}>
+      Disattiva i controlli dell'interfaccia. Puoi segnare preferenze in altre liste o troppe
+      preferenze: il dispositivo non riuscirà a costruire le prove e la scheda non potrà entrare
+      nella bacheca.
     </label>
   </details>
-
-  <p><button type="submit">Cifra la scheda</button></p>
 </form>
-
-<script src="{{ url_for('static', filename='cabina.js') }}"></script>
 {% endblock %}

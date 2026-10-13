@@ -95,6 +95,18 @@ CHECK_DESCRIPTIONS = {
     "V8": "Scrutinio rifatto da zero: soglie, premio, seggi ed eletti",
 }
 
+# Gli stessi controlli spiegati a chi non conosce la crittografia.
+PLAIN_CHECK_DESCRIPTIONS = {
+    "V1": "I numeri di base dell'elezione sono ben formati",
+    "V2": "I garanti hanno creato la chiave correttamente",
+    "V3": "Ogni scheda rispetta le regole",
+    "V4": "La bacheca è integra: nessuna scheda tolta, cambiata o copiata",
+    "V5": "I totali contengono tutte e sole le schede depositate",
+    "V6": "I garanti hanno aperto i totali correttamente",
+    "V7": "I voti pubblicati sono proprio quelli dei totali aperti",
+    "V8": "Seggi ed eletti seguono le regole elettorali",
+}
+
 VOTING = "voto"
 CLOSED = "chiusa"
 
@@ -173,6 +185,7 @@ class SpoilReport:
     Esito della sfida di Benaloh mostrato all'elettore.
 
     entry: riga SPOILED pubblicata sulla bacheca.
+    voter_id: elettore che ha sfidato il dispositivo e può rivotare.
     decoded: la scelta che il dispositivo aveva cifrato, ricavata dai
     voti rivelati.
     matches_choice: i voti rivelati corrispondono alla scelta fatta.
@@ -181,6 +194,7 @@ class SpoilReport:
     """
 
     entry: BoardEntry
+    voter_id: str
     decoded: str
     matches_choice: bool
     reencrypts: bool
@@ -233,13 +247,15 @@ def format_code(value: int, params: GroupParameters, short: bool = False) -> str
 
 def normalize_code(text: str) -> str:
     """
-    Toglie spazi e trattini da un codice scritto dall'elettore.
+    Tiene solo le cifre esadecimali di un codice scritto o copiato
+    dall'elettore: spazi, trattini e puntini di sospensione vengono
+    ignorati.
     """
 
     return "".join(
         character
         for character in text.upper()
-        if character not in " -"
+        if character in "0123456789ABCDEF"
     )
 
 
@@ -447,7 +463,13 @@ class ElectionSession:
         self.scrutiny: ScrutinyResult | None = None
 
         self._pending: dict[str, PendingBallot] = {}
+        self._receipts: dict[str, int] = {}
+        self._spoil_reports: dict[str, SpoilReport] = {}
         self._clean_verification: VerificationReport | None = None
+
+        # Tempo medio di una scheda simulata (cifratura, prove, deposito),
+        # misurato da prefill: serve a stimare la durata delle simulazioni.
+        self.seconds_per_ballot: float | None = None
 
     @property
     def public_key(self) -> int:
@@ -470,24 +492,35 @@ class ElectionSession:
         voters_per_district: int,
         seed: int,
         progress: Callable[[int, int], None] | None = None,
+        list_weights: tuple[float, ...] | None = None,
+        blank_probability: float = 0.03,
+        spoil_probability: float = SIMULATED_SPOIL_PROBABILITY,
     ) -> None:
         """
         Fa votare elettori simulati con scelte casuali ma valide.
 
         Ogni elettore passa dallo stesso percorso del browser: scheda
         cifrata con le prove, controllo delle prove sulla bacheca,
-        deposito. Circa uno su venti spreca prima una scheda.
-        progress, se indicato, riceve il numero di schede depositate
-        e il totale.
+        deposito. Con probabilità spoil_probability spreca prima una
+        scheda per controllare il dispositivo.
+
+        list_weights orienta il voto verso alcune liste (default: i
+        pesi di demo.py per la configurazione di esempio, altrimenti
+        tutte uguali). progress, se indicato, riceve il numero di
+        schede depositate e il totale.
         """
 
         rng = random.Random(seed)
 
-        weights = (
-            EXAMPLE_WEIGHTS
-            if len(self.config.list_names) == len(EXAMPLE_WEIGHTS)
-            else tuple(1.0 for _ in self.config.list_names)
-        )
+        if list_weights is not None:
+            weights = list_weights
+        elif len(self.config.list_names) == len(EXAMPLE_WEIGHTS):
+            weights = EXAMPLE_WEIGHTS
+        else:
+            weights = tuple(1.0 for _ in self.config.list_names)
+
+        if len(weights) != len(self.config.list_names):
+            raise ValueError("Serve un peso per ogni lista.")
 
         voters = {
             f"simulato-{district_index + 1}-{number + 1:04d}": district_index
@@ -512,30 +545,69 @@ class ElectionSession:
 
         total = len(voters)
         done = 0
+        ballots = 0
+        start = time.perf_counter()
 
         for voter_id, district_index in voters.items():
             choice = random_choice(
                 rng,
                 self.layouts[district_index],
                 weights,
-                0.03,
+                blank_probability,
                 self.config.rules.max_preferences,
                 self.config.rules.max_preferences_per_gender,
             )
 
-            if rng.random() < SIMULATED_SPOIL_PROBABILITY:
+            if rng.random() < spoil_probability:
                 self.spoil(self.prepare(voter_id, choice).token)
+                ballots += 1
 
             self.cast(self.prepare(voter_id, choice).token)
 
             done += 1
+            ballots += 1
 
             if progress is not None:
                 progress(done, total)
 
+        # Tempo medio di una scheda, depositata o sprecata.
+        if ballots:
+            self.seconds_per_ballot = (time.perf_counter() - start) / ballots
+
     def _require_voting(self) -> None:
         if self.phase != VOTING:
             raise ValueError("L'elezione è chiusa: non si può più votare.")
+
+    def default_present_guardians(self) -> tuple[int, ...]:
+        """
+        Garanti proposti nella pagina di spoglio: 1, 3 e 5 se esistono
+        e bastano, altrimenti i primi quorum garanti.
+        """
+
+        default = (1, 3, 5)
+
+        if max(default) <= self.guardian_count and len(default) >= self.quorum:
+            return default
+
+        return tuple(range(1, self.quorum + 1))
+
+    @property
+    def clean_verification(self) -> VerificationReport | None:
+        """
+        Esito del verificatore sul registro originale, se è già stato
+        eseguito dopo la chiusura.
+        """
+
+        return self._clean_verification
+
+    @property
+    def min_search_length(self) -> int:
+        """
+        Cifre minime per cercare un codice sulla bacheca: quattro, o
+        tutto il codice se è più corto (gruppo didattico).
+        """
+
+        return min(4, (self.params.q.bit_length() + 3) // 4)
 
     def available_demo_codes(self) -> dict[str, int]:
         """
@@ -720,6 +792,11 @@ class ElectionSession:
         """
 
         with self._lock:
+            if token in self._receipts:
+                # Doppio clic o pagina ricaricata: la scheda è già
+                # depositata, si restituisce la stessa ricevuta.
+                return self.receipt(token)
+
             self._require_voting()
             pending = self.pending(token)
             prepared = pending.prepared
@@ -739,7 +816,21 @@ class ElectionSession:
             del self._pending[token]
             self._clean_verification = None
 
-            return self.board.entries[-1]
+            entry = self.board.entries[-1]
+            self._receipts[token] = entry.sequence
+
+            return entry
+
+    def receipt(self, token: str) -> BoardEntry:
+        """
+        Riga della bacheca della scheda depositata con questo token.
+        """
+
+        with self._lock:
+            if token not in self._receipts:
+                raise ValueError("Ricevuta non trovata.")
+
+            return self.board.entries[self._receipts[token] - 1]
 
     def spoil(self, token: str) -> SpoilReport:
         """
@@ -750,8 +841,15 @@ class ElectionSession:
         """
 
         with self._lock:
+            if token in self._spoil_reports:
+                return self._spoil_reports[token]
+
             self._require_voting()
             pending = self.pending(token)
+
+            if pending.voter_id in self.roll.voted:
+                raise ValueError(f"L'elettore {pending.voter_id} ha già votato.")
+
             prepared = pending.prepared
             witness: BallotWitness = prepared.witness
 
@@ -782,8 +880,9 @@ class ElectionSession:
             witness.preference_plaintexts,
         )
 
-        return SpoilReport(
+        report = SpoilReport(
             entry=entry,
+            voter_id=pending.voter_id,
             decoded=self.describe_choice(prepared.district_index, *revealed),
             matches_choice=revealed == expected,
             reencrypts=verify_spoiled_ballot(
@@ -794,6 +893,22 @@ class ElectionSession:
             ),
         )
 
+        with self._lock:
+            self._spoil_reports[token] = report
+
+        return report
+
+    def spoil_report(self, token: str) -> SpoilReport:
+        """
+        Esito della sfida del dispositivo fatta con questo token.
+        """
+
+        with self._lock:
+            if token not in self._spoil_reports:
+                raise ValueError("Sfida non trovata.")
+
+            return self._spoil_reports[token]
+
     def find_entries(self, text: str) -> tuple[BoardEntry, ...]:
         """
         Cerca sulla bacheca le righe il cui codice di tracciamento
@@ -802,9 +917,8 @@ class ElectionSession:
         """
 
         prefix = normalize_code(text)
-        width = (self.params.q.bit_length() + 3) // 4
 
-        if len(prefix) < min(4, width):
+        if len(prefix) < self.min_search_length:
             return ()
 
         with self._lock:

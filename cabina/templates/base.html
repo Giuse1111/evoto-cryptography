@@ -1,36 +1,79 @@
+{% from "macro.html" import icon %}
+{%- set active = active | default("") -%}
 <!doctype html>
 <html lang="it">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}{{ config.name }}{% endblock %} · eVoto</title>
+  <title>{% block title %}Panoramica{% endblock %} · eVoto</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='stile.css') }}">
+  {% block head %}{% endblock %}
 </head>
 <body>
+  <a class="skip" href="#contenuto">Vai al contenuto</a>
+
   <header class="top">
     <div class="wrap top-row">
-      <a class="brand" href="{{ url_for('index') }}">eVoto</a>
-      <nav>
-        <a href="{{ url_for('access') }}">Cabina</a>
-        <a href="{{ url_for('board') }}">Bacheca</a>
-        <a href="{{ url_for('closing') }}">Spoglio</a>
-        <a href="{{ url_for('results') }}">Risultati</a>
-        <a href="{{ url_for('verification') }}">Verifica</a>
-      </nav>
-      <span class="badge {{ 'badge-closed' if closed else 'badge-open' }}">
-        {{ 'Elezione chiusa' if closed else 'Voto aperto' }}
-      </span>
+      <a class="brand" href="{{ url_for('index') }}" {% if active == 'home' %}aria-current="page"{% endif %}>
+        {{ icon("urna", 26) }}
+        <span>eVoto</span>
+        <span class="brand-sub">demo di voto verificabile</span>
+      </a>
+
+      {% if preparing %}
+        <span class="badge badge-busy">Simulazione in preparazione</span>
+      {% elif not ready %}
+        <span class="badge badge-idle">Nessuna simulazione</span>
+      {% elif closed %}
+        <span class="badge badge-closed">Elezione chiusa</span>
+      {% else %}
+        <span class="badge badge-open">Voto aperto</span>
+      {% endif %}
     </div>
+
+    <nav class="steps-bar" aria-label="Passi della prova">
+      <ol class="wrap steps">
+        {% for step in steps %}
+          {% set is_current = step.key == active %}
+          <li>
+            {% if step.locked %}
+              <span class="step locked" title="{{ step.hint }}" aria-disabled="true">
+            {% else %}
+              <a class="step{{ ' current' if is_current }}{{ ' done' if step.done and not is_current }}"
+                 href="{{ url_for(step.endpoint) }}" title="{{ step.hint }}"
+                 {% if is_current %}aria-current="page"{% endif %}>
+            {% endif %}
+                <span class="step-dot">
+                  {%- if step.done and not is_current %}{{ icon("spunta", 14) }}<span class="sr-only">fatto: </span>
+                  {%- else %}{{ loop.index }}{% endif -%}
+                </span>
+                <span class="step-label">{{ step.label }}</span>
+            {% if step.locked %}</span>{% else %}</a>{% endif %}
+          </li>
+        {% endfor %}
+      </ol>
+    </nav>
   </header>
 
-  <main class="wrap">
+  <main id="contenuto" class="wrap">
     {% block content %}{% endblock %}
+    {% block actions %}{% endblock %}
   </main>
 
-  <footer class="wrap foot">
-    Demo didattica: la cabina è solo una vetrina, la sicurezza sta nelle prove.
-    Gruppo con <code>p</code> da {{ election.params.p.bit_length() }} bit
-    {%- if election.params.p.bit_length() < 64 %} (didattico, non sicuro){% endif %}.
+  <footer class="foot">
+    <div class="wrap">
+      <p>
+        Progetto didattico: elettori, candidati e codici sono simulati. Non usare questa demo per
+        elezioni vere.
+        {% if election %}
+          Modalità {{ mode.label | lower if mode else "personalizzata" }}:
+          numeri da {{ election.params.p.bit_length() }} bit
+          {%- if mode and mode.key == "veloce" %}, troppo piccoli per proteggere davvero il voto{% endif %}.
+        {% endif %}
+      </p>
+    </div>
   </footer>
+
+  <script src="{{ url_for('static', filename='cabina.js') }}"></script>
 </body>
 </html>

@@ -1,28 +1,53 @@
 {% extends "base.html" %}
 {% block title %}Spoglio{% endblock %}
 {% block content %}
-<h1>Chiusura e spoglio</h1>
+<h1>Spoglio</h1>
 
 <p class="lead">
-  Per ogni circoscrizione le {{ counts.cast }} schede depositate vengono moltiplicate tra loro:
-  il prodotto dei cifrati è il cifrato della somma. I garanti presenti decifrano soltanto
-  i totali, ciascuno con una prova di Chaum-Pedersen; i coefficienti di Lagrange compensano
-  chi è assente.
+  Per chiudere il voto servono i garanti: ciascuno custodisce un pezzo della chiave e ne servono
+  almeno {{ election.quorum }} su {{ election.guardian_count }}. Insieme aprono soltanto i totali
+  di ogni circoscrizione, mai le singole schede.
 </p>
 
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
 
-<form method="post" class="card">
-  <h2>Garanti presenti</h2>
-  <p>Ne servono almeno {{ election.quorum }} su {{ election.guardian_count }}.</p>
-  <p>
+<form method="post" class="card closing-form" data-busy="Spoglio in corso: i garanti aprono i totali…">
+  <h2>Quali garanti sono presenti?</h2>
+  <p class="hint">
+    Prova anche a sceglierne meno di {{ election.quorum }}: i totali restano chiusi e il voto resta aperto.
+  </p>
+  <div class="guardians">
     {% for index in range(1, election.guardian_count + 1) %}
       <label class="guardian">
         <input type="checkbox" name="garanti" value="{{ index }}" {{ 'checked' if index in selected }}>
-        Garante {{ index }}
+        <span>Garante {{ index }}</span>
       </label>
     {% endfor %}
+  </div>
+
+  <p class="summary-line">
+    Sulla bacheca ci sono {{ counts.cast }} schede da contare
+    {%- if counts.spoiled %} e {{ counts.spoiled }} schede di prova, che restano fuori{% endif %}.
   </p>
-  <button type="submit">Chiudi l'elezione e decifra</button>
+
+  <label class="confirm">
+    <input type="checkbox" name="conferma" value="1" required>
+    Ho capito: dopo la chiusura nessuno potrà più votare.
+  </label>
+
+  <div class="submit-row">
+    <button type="submit">Chiudi il voto e conta</button>
+  </div>
+  <p class="busy" hidden></p>
 </form>
+
+<details class="advanced">
+  <summary>Cosa succede durante lo spoglio</summary>
+  <p>
+    Le schede cifrate di ogni circoscrizione vengono combinate tra loro: il risultato è il totale,
+    ancora cifrato. Ogni garante presente apre la sua parte del totale e allega una prova che lo
+    ha fatto correttamente; i pezzi messi insieme danno i voti di ogni lista e di ogni candidato.
+    Chi è assente viene compensato dagli altri, purché siano almeno {{ election.quorum }}.
+  </p>
+</details>
 {% endblock %}

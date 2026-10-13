@@ -1,77 +1,100 @@
 {% extends "base.html" %}
+{% from "macro.html" import action_bar, icon %}
 {% block title %}Verifica{% endblock %}
 {% block content %}
-<h1>Verificatore indipendente</h1>
+<h1>Verifica</h1>
 
 {% if not closed %}
-  <p class="notice">Il registro pubblico si può verificare dopo la chiusura dell'elezione.</p>
+  <p class="notice">Il registro pubblico si può verificare dopo lo spoglio.</p>
 {% else %}
   <p class="lead">
-    Il verificatore legge soltanto il registro pubblico in JSON e rifà tutti i controlli
-    con la libreria standard di Python e <code>gmpy2</code>: non importa <code>evoto</code>,
-    quindi non condivide codice con chi ha prodotto i dati.
-    <a href="{{ url_for('registry') }}">Scarica il registro</a>.
-    {% if registry_path %}Copia sul disco: <code>{{ registry_path }}</code>.{% endif %}
+    Il verificatore è un programma separato: legge soltanto il registro pubblico e rifà da capo
+    tutti i controlli, senza usare il codice che ha gestito l'elezione. Se qualcosa non torna,
+    lo segnala.
   </p>
 
-  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  {% if host.registry_warning %}<p class="notice">{{ host.registry_warning }}</p>{% endif %}
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+
+  {% if report %}
+    <section class="report" aria-live="polite">
+      <div class="verdict {{ 'verdict-ok' if report.overall else 'verdict-ko' }}">
+        {{ 'ELEZIONE VERIFICATA' if report.overall else 'VERIFICA FALLITA' }}
+      </div>
+      <p class="muted">
+        {% if report.tampering %}
+          Registro manomesso: {{ tamperings[report.tampering][0] | lower }}.
+          <a href="{{ url_for('registry', manomissione=report.tampering) }}">Scarica questo registro</a>.
+        {% else %}
+          Registro pubblicato alla chiusura.
+        {% endif %}
+        Tempo del verificatore: {{ report.seconds | decimal }} s.
+      </p>
+
+      <table class="checks">
+        {% for name, description in descriptions.items() %}
+          <tr class="{{ '' if report.checks[name] else 'failed' }}">
+            <td>{% if report.checks[name] %}<span class="ok">✓</span>{% else %}<span class="ko">✗</span>{% endif %}</td>
+            <td>
+              <strong>{{ plain[name] }}</strong>
+              <span class="check-detail">{{ name }} · {{ description }}</span>
+            </td>
+          </tr>
+        {% endfor %}
+      </table>
+    </section>
+  {% endif %}
 
   <div class="choices">
-    <form method="post" class="card verify-form">
-      <h2>Registro pubblicato</h2>
-      <p>Controlla il registro così come è stato pubblicato alla chiusura.</p>
+    <form method="post" class="card choice" data-busy="Verifica in corso…">
+      <h2>Verifica il registro pubblicato</h2>
+      <p>Controlla il registro così come è stato pubblicato alla chiusura: tutti i controlli dovrebbero passare.</p>
       <input type="hidden" name="manomissione" value="">
       <button type="submit">Lancia il verificatore</button>
+      <p class="busy" hidden></p>
     </form>
 
-    <form method="post" class="card verify-form">
-      <h2>Registro manomesso</h2>
+    <form method="post" class="card choice" data-busy="Verifica del registro manomesso in corso…">
+      <h2>Prova a manomettere il registro</h2>
+      <p>Scegli una modifica: il registro cambia solo in questa prova, l'elezione resta com'è.</p>
       {% for key, item in tamperings.items() %}
         <label class="tamper">
-          <input type="radio" name="manomissione" value="{{ key }}" {{ 'checked' if loop.first }}>
+          <input type="radio" name="manomissione" value="{{ key }}"
+                 {{ 'checked' if (report and report.tampering == key) or (not (report and report.tampering) and loop.first) }}>
           {{ item[0] }}
         </label>
       {% endfor %}
-      <button type="submit" class="secondary">Manometti e verifica</button>
+      <button type="submit" class="button-secondary">Manometti e verifica</button>
+      <p class="busy" hidden></p>
     </form>
   </div>
 
-  <p id="in-corso" class="notice" hidden>Verifica in corso: con il gruppo da 2048 bit servono alcuni secondi per scheda…</p>
-
-  {% if report %}
-    <div class="verdict {{ 'verdict-ok' if report.overall else 'verdict-ko' }}">
-      {{ 'ELEZIONE VERIFICATA' if report.overall else 'VERIFICA FALLITA' }}
-    </div>
-    <p class="muted">
-      {% if report.tampering %}
-        Registro manomesso: {{ tamperings[report.tampering][0] | lower }}.
-        <a href="{{ url_for('registry', manomissione=report.tampering) }}">Scarica questo registro</a>.
-      {% else %}
-        Registro pubblicato.
-      {% endif %}
-      Tempo del verificatore: {{ '%.1f' | format(report.seconds) }} s.
-    </p>
-
-    <table class="checks">
-      {% for name, description in descriptions.items() %}
-        <tr>
-          <td>{% if report.checks[name] %}<span class="ok">✓</span>{% else %}<span class="ko">✗</span>{% endif %}</td>
-          <td><strong>{{ name }}</strong></td>
-          <td>{{ description }}</td>
-        </tr>
-      {% endfor %}
-    </table>
+  {% if estimate is not none %}
+    <p class="hint">Ogni verifica richiede {{ estimate | duration }}.</p>
   {% endif %}
-{% endif %}
 
-<script>
-  document.querySelectorAll(".verify-form").forEach(function (form) {
-    form.addEventListener("submit", function () {
-      document.getElementById("in-corso").hidden = false;
-      document.querySelectorAll(".verify-form button").forEach(function (button) {
-        button.disabled = true;
-      });
-    });
-  });
-</script>
+  <div class="card">
+    <h2>Verifica dal tuo computer</h2>
+    <p>
+      Scarica il registro e lancia il verificatore dal terminale, nella cartella del progetto:
+    </p>
+    <pre class="command">uv run python -m verifica {{ registry_path if registry_path else "registro.json" }}</pre>
+    <p>
+      <a class="button button-secondary button-small" href="{{ url_for('registry') }}">{{ icon("scarica", 16) }} Scarica il registro</a>
+      {% if registry_path and not host.registry_warning %}
+        <span class="hint">Una copia è già stata scritta in <code>{{ registry_path }}</code>.</span>
+      {% endif %}
+    </p>
+  </div>
+{% endif %}
+{% endblock %}
+
+{% block actions %}
+  {% call action_bar() %}
+    {% if closed %}
+      <a class="button {{ '' if election.clean_verification else 'button-secondary' }}" href="{{ url_for('prepare') }}">Prepara una nuova simulazione</a>
+    {% else %}
+      <a class="button" href="{{ url_for('closing') }}">Vai allo spoglio</a>
+    {% endif %}
+  {% endcall %}
 {% endblock %}

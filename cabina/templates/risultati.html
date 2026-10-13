@@ -1,21 +1,83 @@
 {% extends "base.html" %}
+{% from "macro.html" import action_bar %}
 {% block title %}Risultati{% endblock %}
 {% block content %}
+{% set scrutiny = election.scrutiny %}
+{% set rules = config.rules %}
 <h1>Risultati</h1>
 
-{% if not closed %}
-  <p class="notice">L'elezione è ancora aperta: i totali sono cifrati. <a href="{{ url_for('closing') }}">Vai allo spoglio</a>.</p>
-{% else %}
-  {% set scrutiny = election.scrutiny %}
+<p class="lead">
+  Totali aperti dai garanti {{ election.present_guardians | join(', ') }}
+  {%- if absent %} (assenti: {{ absent | join(', ') }}){% endif %}.
+  Ogni garante ha allegato la prova di aver fatto correttamente la sua parte, e nessuna singola
+  scheda è stata aperta.
+</p>
 
-  <p class="lead">
-    Totali decifrati dai garanti {{ election.present_guardians | join(', ') }}
-    {%- if absent %}; assenti: {{ absent | join(', ') }}{% endif %}.
-    Ogni share è accompagnata da una prova di Chaum-Pedersen.
-    Nessuna singola scheda è stata decifrata.
-  </p>
+{% if host.registry_warning %}<p class="notice">{{ host.registry_warning }}</p>{% endif %}
 
-  <h2>Voti per circoscrizione</h2>
+<div class="card headline">
+  {% if scrutiny.bonus_competitor is not none %}
+    {% set winner = scrutiny.competitors[scrutiny.bonus_competitor] %}
+    <p class="headline-text">
+      <strong>{{ winner.name }}</strong> raggiunge il
+      {{ (100 * winner.votes / scrutiny.valid_votes) | decimal }}% dei voti validi e prende il
+      premio di maggioranza: <strong>{{ scrutiny.competitor_seats[scrutiny.bonus_competitor] }} seggi su {{ config.seats }}</strong>.
+    </p>
+  {% else %}
+    <p class="headline-text">
+      Nessun premio di maggioranza: i {{ config.seats }} seggi sono divisi in proporzione ai voti
+      tra chi supera le soglie di sbarramento.
+    </p>
+  {% endif %}
+  <div class="stats">
+    <div class="stat"><span class="stat-number">{{ election.results | sum(attribute='ballot_count') }}</span><span class="stat-label">schede contate</span></div>
+    <div class="stat"><span class="stat-number">{{ scrutiny.valid_votes }}</span><span class="stat-label">voti validi per le liste</span></div>
+    <div class="stat"><span class="stat-number">{{ scrutiny.blank_votes }}</span><span class="stat-label">schede bianche</span></div>
+  </div>
+</div>
+
+<h2>Riparto dei seggi</h2>
+<p class="hint">
+  Soglie: {{ (rules.coalition_threshold * 100) | int }}% per le coalizioni,
+  {{ (rules.list_threshold * 100) | int }}% per le liste; premio a chi raggiunge il
+  {{ (rules.bonus_threshold * 100) | int }}%.
+</p>
+<div class="table-wrap">
+  <table class="results">
+    <thead>
+      <tr><th>Coalizione o lista</th><th>Voti</th><th class="bar-column">%</th><th>Seggi</th></tr>
+    </thead>
+    <tbody>
+      {% for competitor in scrutiny.competitors %}
+        {% set share = 100 * competitor.votes / scrutiny.valid_votes %}
+        <tr class="{{ 'bonus' if loop.index0 == scrutiny.bonus_competitor }}">
+          <td>
+            {{ competitor.name }}
+            {% if loop.index0 == scrutiny.bonus_competitor %}<span class="tag">premio</span>{% endif %}
+          </td>
+          <td>{{ competitor.votes }}</td>
+          <td class="bar-column">
+            <span class="bar"><span class="bar-fill" style="width: {{ '%.1f' | format(share) }}%"></span></span>
+            {{ share | decimal }}
+          </td>
+          <td><strong>{{ scrutiny.competitor_seats[loop.index0] }}</strong></td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Seggi per lista</h2>
+<p class="chips">
+  {% for name in config.list_names %}
+    {% if scrutiny.list_seats[loop.index0] %}
+      <span class="chip">{{ name }}: {{ scrutiny.list_seats[loop.index0] }}</span>
+    {% endif %}
+  {% endfor %}
+</p>
+
+<h2>Voti per circoscrizione</h2>
+<div class="table-wrap">
   <table class="results">
     <thead>
       <tr>
@@ -36,38 +98,10 @@
       {% endfor %}
     </tbody>
   </table>
+</div>
 
-  <h2>Riparto di {{ config.seats }} seggi</h2>
-  <p>Voti validi: {{ scrutiny.valid_votes }}, schede bianche: {{ scrutiny.blank_votes }}.</p>
-  <table class="results">
-    <thead>
-      <tr><th>Lista o coalizione</th><th>Voti</th><th>%</th><th>Seggi</th></tr>
-    </thead>
-    <tbody>
-      {% for competitor in scrutiny.competitors %}
-        <tr class="{{ 'bonus' if loop.index0 == scrutiny.bonus_competitor }}">
-          <td>
-            {{ competitor.name }}
-            {% if loop.index0 == scrutiny.bonus_competitor %}<span class="tag">premio</span>{% endif %}
-          </td>
-          <td>{{ competitor.votes }}</td>
-          <td>{{ '%.1f' | format(100 * competitor.votes / scrutiny.valid_votes) if scrutiny.valid_votes else '-' }}</td>
-          <td>{{ scrutiny.competitor_seats[loop.index0] }}</td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-
-  <h2>Seggi per lista</h2>
-  <p>
-    {% for name in config.list_names %}
-      {% if scrutiny.list_seats[loop.index0] %}
-        <span class="chip">{{ name }}: {{ scrutiny.list_seats[loop.index0] }}</span>
-      {% endif %}
-    {% endfor %}
-  </p>
-
-  <h2>Eletti</h2>
+<h2>Eletti</h2>
+<div class="table-wrap">
   <table class="results">
     <thead>
       <tr><th>Circoscrizione</th><th>Lista</th><th>Eletto</th><th></th></tr>
@@ -87,7 +121,11 @@
       {% endfor %}
     </tbody>
   </table>
+</div>
+{% endblock %}
 
-  <p><a class="button" href="{{ url_for('verification') }}">Verifica l'elezione</a></p>
-{% endif %}
+{% block actions %}
+  {% call action_bar() %}
+    <a class="button" href="{{ url_for('verification') }}">Verifica l'elezione</a>
+  {% endcall %}
 {% endblock %}

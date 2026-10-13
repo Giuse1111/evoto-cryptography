@@ -1,22 +1,34 @@
 {% extends "base.html" %}
+{% from "macro.html" import action_bar, icon, voting_steps %}
 {% block title %}Ricevuta{% endblock %}
 {% block content %}
+{{ voting_steps("ricevuta") }}
+
 <h1>Scheda depositata</h1>
 
-<div class="card">
+<div class="card receipt">
   <p>
     La bacheca ha controllato le prove e ha pubblicato la scheda in posizione
-    {{ entry.sequence }} (circoscrizione {{ district.name }}). Il tuo codice di tracciamento è:
+    <strong>{{ entry.sequence }}</strong> (circoscrizione {{ district.name }}).
+    Questo è il tuo codice di tracciamento:
   </p>
-  <p class="code-big">{{ code(entry.tracking_code) }}</p>
+  <p class="code-big" id="codice-ricevuta">{{ code(entry.tracking_code) }}</p>
   <p>
-    Conservalo: potrai ritrovarlo sulla bacheca. Il codice dipende da tutte le schede
-    precedenti, quindi nessuna riga può essere cambiata senza che il codice cambi.
+    <button type="button" class="button-secondary button-small" data-copy="codice-ricevuta">
+      {{ icon("copia", 16) }} <span>Copia il codice</span>
+    </button>
+  </p>
+  <p>
+    Conservalo: con le prime cifre ritrovi la scheda sulla bacheca. Il codice dipende da tutte le
+    schede precedenti, quindi nessuna riga può essere tolta o cambiata senza che i codici cambino.
     Il codice non rivela il voto.
   </p>
-  <p>
-    <a class="button" href="{{ url_for('board', codice=code(entry.tracking_code, short=True)) }}">Cercalo sulla bacheca</a>
-    <a href="{{ url_for('access') }}">Nuovo elettore</a>
-  </p>
 </div>
+{% endblock %}
+
+{% block actions %}
+  {% call action_bar() %}
+    <a class="button" href="{{ url_for('board', codice=code(entry.tracking_code, short=True)) }}">Cerca il codice sulla bacheca</a>
+    <a class="button button-secondary" href="{{ url_for('access') }}">Fai votare un altro elettore</a>
+  {% endcall %}
 {% endblock %}
