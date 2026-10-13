@@ -1,28 +1,43 @@
 {% extends "base.html" %}
+{% from "macro.html" import action_bar, voting_steps %}
 {% block title %}Sfida del dispositivo{% endblock %}
 {% block content %}
+{{ voting_steps("conferma") }}
+
 <h1>Sfida del dispositivo</h1>
 
+{% set honest = report.matches_choice and report.reencrypts %}
+<div class="verdict {{ 'verdict-ok' if honest else 'verdict-ko' }}">
+  {{ 'Il dispositivo è onesto' if honest else 'Il dispositivo ha imbrogliato' }}
+</div>
+
 <div class="card">
-  <p>Dai voti e dai valori casuali rivelati risulta che il dispositivo aveva cifrato:</p>
+  <p>Aprendo la scheda si legge che il dispositivo aveva registrato:</p>
   <p class="lead"><strong>{{ report.decoded }}</strong></p>
 
   <table class="checks">
     <tr>
       <td>{% if report.matches_choice %}<span class="ok">✓</span>{% else %}<span class="ko">✗</span>{% endif %}</td>
-      <td>La scheda cifrata contiene la scelta che hai fatto</td>
+      <td>La scheda contiene la scelta che hai fatto</td>
     </tr>
     <tr>
       <td>{% if report.reencrypts %}<span class="ok">✓</span>{% else %}<span class="ko">✗</span>{% endif %}</td>
-      <td>Ricifrando voti e valori casuali si ottiene proprio la scheda pubblicata</td>
+      <td>Richiudendo la scelta con i valori rivelati si ottiene proprio la scheda pubblicata</td>
     </tr>
   </table>
 
   <p>
-    La scheda è sulla bacheca come <strong>sprecata</strong> (posizione {{ report.entry.sequence }},
-    codice <span class="mono">{{ code(report.entry.tracking_code, short=True) }}…</span>) e non verrà contata.
-    Chiunque può ripetere il controllo, perché i valori rivelati sono pubblici.
+    La scheda è sulla bacheca come <strong>scheda di prova</strong> (posizione {{ report.entry.sequence }},
+    codice <span class="mono">{{ code(report.entry.tracking_code, short=True) }}…</span>) e non verrà
+    contata. Chiunque può ripetere il controllo, perché i valori rivelati sono pubblici.
   </p>
-  <p><a class="button" href="{{ url_for('ballot', voter_id=voter_id) }}">Vota di nuovo</a></p>
 </div>
+{% endblock %}
+
+{% block actions %}
+  {% if can_vote %}
+    {% call action_bar() %}
+      <a class="button" href="{{ url_for('ballot', voter_id=report.voter_id) }}">Vota di nuovo come {{ report.voter_id }}</a>
+    {% endcall %}
+  {% endif %}
 {% endblock %}

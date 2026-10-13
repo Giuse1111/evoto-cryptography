@@ -1,40 +1,65 @@
 {% extends "base.html" %}
-{% block title %}Cabina{% endblock %}
+{% from "macro.html" import action_bar, voting_steps %}
+{% block title %}Vota{% endblock %}
 {% block content %}
 <h1>Cabina elettorale</h1>
 
 {% if closed %}
-  <p class="notice">L'elezione è chiusa: non si può più votare.</p>
+  <p class="notice">Il voto è chiuso: non si può più votare. I risultati sono nella pagina dello spoglio.</p>
 {% else %}
+  {{ voting_steps("elettore") }}
+
   <p class="lead">
-    Inserisci il tuo codice di elettore. In un sistema reale l'identificazione avverrebbe
-    con SPID o CIE; qui la lista degli aventi diritto è simulata.
+    Scegli un elettore: in un sistema vero ti identificheresti con SPID o CIE, qui gli aventi
+    diritto sono simulati. Ogni codice vota una sola volta e riceve la scheda della sua
+    circoscrizione.
   </p>
 
-  <p class="notice">
-    In questa demo il programma locale fa sia da dispositivo di voto sia da bacheca: la scelta
-    arriva al programma, che la cifra e costruisce le prove. In un sistema reale la cifratura
-    avverrebbe sul dispositivo dell'elettore e la bacheca vedrebbe solo la scheda cifrata.
-  </p>
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
 
-  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <div class="card">
+    <h2>Codici disponibili</h2>
+    {% for district_index, voter_ids in codes | dictsort %}
+      <div class="code-group">
+        <span class="code-group-name">{{ config.districts[district_index].name }}</span>
+        <span class="chips">
+          {% for voter_id in voter_ids %}
+            <a class="chip" href="{{ url_for('ballot', voter_id=voter_id) }}">{{ voter_id }}</a>
+          {% endfor %}
+        </span>
+      </div>
+    {% else %}
+      <p>Tutti i codici dimostrativi hanno già votato. Per votare ancora prepara una nuova simulazione.</p>
+    {% endfor %}
 
-  <form method="post" class="inline-form">
-    <label for="codice">Codice</label>
-    <input id="codice" name="codice" placeholder="NORD-01" autocomplete="off" required>
-    <button type="submit">Entra</button>
-  </form>
+    {% if codes %}
+      <form method="post" class="inline-form">
+        <label for="codice">Oppure scrivi il codice</label>
+        <input id="codice" name="codice" value="{{ typed }}" placeholder="NORD-01" autocomplete="off" required>
+        <button type="submit">Entra</button>
+      </form>
+    {% endif %}
+  </div>
 
-  <h2>Codici dimostrativi ancora disponibili</h2>
-  {% for district_index, voter_ids in codes | dictsort %}
+  <details class="advanced">
+    <summary>Nota tecnica: dove viene cifrata la scheda</summary>
     <p>
-      <strong>{{ config.districts[district_index].name }}:</strong>
-      {% for voter_id in voter_ids %}
-        <a class="chip" href="{{ url_for('ballot', voter_id=voter_id) }}">{{ voter_id }}</a>
-      {% endfor %}
+      In questa demo lo stesso programma fa sia da dispositivo di voto sia da bacheca: la scelta
+      arriva al programma, che la cifra e costruisce le prove. In un sistema reale la cifratura
+      avverrebbe sul dispositivo dell'elettore e la bacheca vedrebbe solo la scheda cifrata.
     </p>
-  {% else %}
-    <p>Tutti i codici dimostrativi hanno già votato.</p>
-  {% endfor %}
+  </details>
 {% endif %}
+{% endblock %}
+
+{% block actions %}
+  {% if closed %}
+    {% call action_bar() %}
+      <a class="button" href="{{ url_for('closing') }}">Guarda i risultati</a>
+    {% endcall %}
+  {% else %}
+    {% call action_bar("Quando hai finito di votare") %}
+      <a class="button button-secondary" href="{{ url_for('board') }}">Vai alla bacheca</a>
+    {% endcall %}
+  {% endif %}
 {% endblock %}

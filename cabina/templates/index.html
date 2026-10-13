@@ -1,59 +1,189 @@
 {% extends "base.html" %}
+{% from "macro.html" import icon %}
+{% block title %}Panoramica{% endblock %}
 {% block content %}
-<h1>{{ config.name }}</h1>
-<p class="lead">
-  {{ config.districts | length }} circoscrizioni, {{ config.list_names | length }} liste,
-  {{ config.seats }} seggi. Ogni casella della scheda viene cifrata e accompagnata
-  da prove a conoscenza zero; si decifrano soltanto i totali.
-</p>
+{% set rules = config.rules %}
+{% set guardians = (election.quorum ~ " su " ~ election.guardian_count) if election else "3 su 5" %}
 
-<ol class="phases">
-  <li class="card">
-    <h2>1. Cerimonia delle chiavi</h2>
-    <p>
-      {{ election.guardian_count }} garanti, ne servono {{ election.quorum }} per decifrare.
-      Nessuno conosce la chiave segreta intera.
+<section class="hero">
+  <div class="hero-text">
+    <p class="kicker">Demo di voto elettronico verificabile</p>
+    <h1>Vota, ritrova la tua scheda e controlla il risultato</h1>
+    <p class="lead">
+      eVoto simula un'elezione online dall'inizio alla fine. Voti come un elettore, segui lo
+      spoglio e controlli che nessun voto sia stato perso o cambiato. Non serve sapere nulla di
+      crittografia: qui trovi cosa succede a ogni passo, il resto lo scopri provando.
     </p>
-    <p class="mono">K = {{ code(election.public_key, short=True) }}…</p>
-  </li>
-
-  <li class="card">
-    <h2>2. Voto</h2>
-    {% if closed %}
-      <p>Il voto è chiuso.</p>
-    {% else %}
-      <p>Vota con un codice dimostrativo: la scheda viene cifrata nel dispositivo.</p>
-      <p><a class="button" href="{{ url_for('access') }}">Vai alla cabina</a></p>
-    {% endif %}
-  </li>
-
-  <li class="card">
-    <h2>3. Bacheca pubblica</h2>
-    <p>
-      {{ counts.cast }} schede depositate, {{ counts.spoiled }} sprecate per controllare il dispositivo.
-      Catena dei codici:
-      {% if board_is_valid %}<span class="ok">valida</span>{% else %}<span class="ko">non valida</span>{% endif %}.
+    <p class="hero-actions">
+      <a class="button button-big" href="{{ url_for(next_step[1]) }}">{{ next_step[0] }} {{ icon("freccia", 18) }}</a>
+      <a class="button button-ghost" href="#come-si-usa">Come si usa</a>
     </p>
-    <p><a href="{{ url_for('board') }}">Apri la bacheca</a></p>
-  </li>
+  </div>
 
-  <li class="card">
-    <h2>4–5. Conteggio e decifratura</h2>
-    {% if closed %}
+  <aside class="status-card" aria-label="Simulazione attuale">
+    <h2>Simulazione attuale</h2>
+    <p class="status-name">{{ config.name }}</p>
+    <dl class="facts">
+      <div><dt>Circoscrizioni</dt><dd>{{ config.districts | length }}</dd></div>
+      {% set coalition_lists = config.coalitions | map(attribute="list_indices") | map("length") | sum %}
+      <div><dt>Liste</dt><dd>{{ config.list_names | length }}, di cui {{ coalition_lists }} in {{ config.coalitions | length }} coalizioni</dd></div>
+      <div><dt>Seggi</dt><dd>{{ config.seats }}</dd></div>
+      {% if election %}
+        <div><dt>Garanti</dt><dd>{{ election.guardian_count }}, ne servono {{ election.quorum }}</dd></div>
+        <div><dt>Modalità</dt><dd>{{ mode.label if mode else "personalizzata" }} ({{ election.params.p.bit_length() }} bit)</dd></div>
+      {% endif %}
+      {% if counts %}
+        <div><dt>Sulla bacheca</dt><dd>{{ counts.cast }} schede depositate, {{ counts.spoiled }} di prova</dd></div>
+      {% endif %}
+    </dl>
+    <p class="status-line">
+      {% if preparing %}
+        <span class="dot dot-busy"></span> Nuova simulazione in preparazione: {{ status.done }} elettori su {{ status.total }}.
+      {% elif not ready %}
+        <span class="dot dot-idle"></span> Nessuna simulazione pronta.
+      {% elif closed %}
+        <span class="dot dot-closed"></span> Voto chiuso: i risultati sono pronti.
+      {% else %}
+        <span class="dot dot-open"></span> Voto aperto: puoi votare con i codici dimostrativi.
+      {% endif %}
+    </p>
+  </aside>
+</section>
+
+<section aria-labelledby="garanzie">
+  <h2 id="garanzie" class="section-title">Cosa garantisce</h2>
+  <div class="features">
+    <article class="feature">
+      <span class="feature-icon">{{ icon("lucchetto") }}</span>
+      <h3>Il tuo voto resta segreto</h3>
       <p>
-        Totali decifrati con i garanti {{ election.present_guardians | join(', ') }}.
-        <a href="{{ url_for('results') }}">Vedi seggi ed eletti</a>.
+        La scheda viene chiusa in una busta digitale prima di lasciare la cabina. Nessuno può
+        aprirla, nemmeno chi gestisce il sistema: alla fine si aprono soltanto i totali.
       </p>
-    {% else %}
-      <p>Si moltiplicano i cifrati e i garanti presenti decifrano solo i totali.</p>
-      <p><a href="{{ url_for('closing') }}">Chiudi l'elezione</a></p>
-    {% endif %}
-  </li>
+    </article>
+    <article class="feature">
+      <span class="feature-icon">{{ icon("cerca") }}</span>
+      <h3>Puoi ritrovare la tua scheda</h3>
+      <p>
+        Dopo il voto ricevi un codice di tracciamento. Cercandolo sulla bacheca pubblica controlli
+        che la tua scheda c'è. Il codice non rivela per chi hai votato.
+      </p>
+    </article>
+    <article class="feature">
+      <span class="feature-icon">{{ icon("garanti") }}</span>
+      <h3>Nessuno decide da solo</h3>
+      <p>
+        La chiave che apre i totali è divisa tra più garanti: per lo spoglio ne servono {{ guardians }}.
+        Uno da solo non apre nulla, e se qualcuno manca si conclude lo stesso.
+      </p>
+    </article>
+    <article class="feature">
+      <span class="feature-icon">{{ icon("scudo") }}</span>
+      <h3>Chiunque può ricontrollare</h3>
+      <p>
+        Alla fine viene pubblicato un registro con tutti i dati. Un programma indipendente rifà i
+        conti da zero: se qualcuno ha cambiato anche un solo voto, il controllo fallisce.
+      </p>
+    </article>
+  </div>
+</section>
 
-  <li class="card">
-    <h2>6. Verifica</h2>
-    <p>Il verificatore indipendente ricontrolla tutto dal registro pubblico, senza importare la libreria.</p>
-    <p><a href="{{ url_for('verification') }}">Apri il verificatore</a></p>
-  </li>
-</ol>
+<section aria-labelledby="come-si-usa">
+  <h2 id="come-si-usa" class="section-title">Come si usa</h2>
+  <p class="section-lead">
+    Il menu in alto segue questi cinque passi. All'avvio una simulazione è già pronta:
+    puoi cominciare direttamente dal voto.
+  </p>
+  <ol class="howto">
+    <li>
+      <h3>Prepara</h3>
+      <p>
+        Scegli quanti elettori simulati votano e come: una coalizione in testa, un testa a testa,
+        tutte le liste alla pari. Puoi anche cambiare il numero di garanti.
+      </p>
+    </li>
+    <li>
+      <h3>Vota</h3>
+      <p>
+        Scegli un codice elettore e compila la scheda: una lista e, se vuoi, fino a
+        {{ rules.max_preferences }} preferenze per candidati della stessa lista. Prima di depositarla
+        puoi sfidare il dispositivo per controllare che abbia registrato davvero la tua scelta.
+      </p>
+    </li>
+    <li>
+      <h3>Bacheca</h3>
+      <p>
+        Tutte le schede sono pubblicate chiuse nella loro busta. Cerca il tuo codice di
+        tracciamento e controlla che la tua scheda ci sia.
+      </p>
+    </li>
+    <li>
+      <h3>Spoglio e risultati</h3>
+      <p>
+        Chiudi il voto scegliendo quali garanti sono presenti. Si aprono solo i totali: vedi i voti,
+        l'eventuale premio di maggioranza, i seggi e gli eletti.
+      </p>
+    </li>
+    <li>
+      <h3>Verifica</h3>
+      <p>
+        Lancia il verificatore indipendente sul registro pubblico. Poi prova a manomettere il
+        registro e guarda quale controllo se ne accorge.
+      </p>
+    </li>
+  </ol>
+</section>
+
+<section class="two-columns">
+  <div class="panel">
+    <h2>Esperimenti da provare</h2>
+    <ul class="tries">
+      <li><strong>Sfida il dispositivo</strong> prima di depositare: la scheda viene aperta davanti a te, scartata, e voti di nuovo.</li>
+      <li><strong>Attiva il «dispositivo scorretto»</strong> sotto la scheda e segna preferenze non ammesse: la scheda non entra nella bacheca.</li>
+      <li><strong>Allo spoglio scegli meno garanti</strong> del necessario: i totali restano chiusi.</li>
+      <li><strong>Nella verifica manometti il registro</strong>, per esempio aggiungendo un voto: il verificatore se ne accorge.</li>
+      <li><strong>Prepara un testa a testa</strong> e guarda se qualcuno raggiunge il {{ (rules.bonus_threshold * 100) | int }}% e prende il premio.</li>
+    </ul>
+  </div>
+
+  <div class="panel">
+    <h2>Parole utili</h2>
+    <details>
+      <summary>Scheda cifrata</summary>
+      <p>La scheda trasformata in numeri che solo la chiave dei garanti può aprire. Somiglia a una busta sigillata.</p>
+    </details>
+    <details>
+      <summary>Codice di tracciamento</summary>
+      <p>La ricevuta del voto. Dipende da tutte le schede depositate prima: se qualcuno togliesse o cambiasse una scheda, i codici successivi non tornerebbero più.</p>
+    </details>
+    <details>
+      <summary>Bacheca pubblica</summary>
+      <p>L'elenco di tutte le schede, chiuse, visibile a chiunque. Le schede sprecate per la sfida del dispositivo restano visibili ma non vengono contate.</p>
+    </details>
+    <details>
+      <summary>Sfida del dispositivo</summary>
+      <p>Un controllo a sorpresa: invece di depositare, chiedi al dispositivo di aprire la scheda. Se avesse registrato un'altra scelta te ne accorgeresti; siccome non sa in anticipo quando lo sfiderai, non può imbrogliare senza rischiare di essere scoperto.</p>
+    </details>
+    <details>
+      <summary>Garanti e quorum</summary>
+      <p>I garanti custodiscono ciascuno un pezzo della chiave. Il quorum è il numero minimo di garanti che devono essere presenti per aprire i totali.</p>
+    </details>
+    <details>
+      <summary>Prova a conoscenza zero</summary>
+      <p>Un piccolo calcolo allegato alla scheda che dimostra che rispetta le regole (una sola lista, non troppe preferenze) senza rivelare cosa contiene.</p>
+    </details>
+    <details>
+      <summary>Registro pubblico e verificatore</summary>
+      <p>Il registro contiene tutto ciò che serve per ricontrollare l'elezione. Il verificatore è un programma separato che lo rilegge e rifà ogni controllo da capo.</p>
+    </details>
+    <details>
+      <summary>Premio di maggioranza</summary>
+      <p>Se la coalizione o la lista più votata raggiunge il {{ (rules.bonus_threshold * 100) | int }}% dei voti validi, riceve almeno il {{ (rules.bonus_seat_share * 100) | int }}% dei seggi; gli altri seggi si dividono in proporzione tra chi supera le soglie di sbarramento.</p>
+    </details>
+    <details>
+      <summary>Modalità realistica e veloce</summary>
+      <p>La modalità realistica usa numeri grandi come un sistema vero, quindi ogni scheda richiede circa un secondo. Quella veloce usa numeri piccoli: è istantanea ma non protegge davvero il voto.</p>
+    </details>
+  </div>
+</section>
 {% endblock %}

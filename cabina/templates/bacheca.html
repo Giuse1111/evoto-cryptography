@@ -1,49 +1,89 @@
 {% extends "base.html" %}
+{% from "macro.html" import action_bar %}
 {% block title %}Bacheca{% endblock %}
 {% block content %}
 <h1>Bacheca pubblica</h1>
 
 <p class="lead">
-  {{ counts.cast }} schede depositate e {{ counts.spoiled }} sprecate.
-  Catena dei codici di tracciamento:
-  {% if board_is_valid %}<span class="ok">valida</span>{% else %}<span class="ko">non valida</span>{% endif %}.
-  Ogni codice è <span class="mono">H(codice precedente, posizione, stato, impronta)</span>.
+  Tutte le schede, chiuse nella loro busta digitale, nell'ordine in cui sono arrivate.
+  Chiunque può leggerla: il voto resta segreto, ma si vede che ogni scheda c'è.
 </p>
 
-<form method="get" class="inline-form">
-  <label for="codice">Cerca il tuo codice</label>
-  <input id="codice" name="codice" value="{{ search }}" placeholder="prime cifre del codice" autocomplete="off">
-  <button type="submit">Cerca</button>
-</form>
+<div class="stats">
+  <div class="stat"><span class="stat-number">{{ counts.cast }}</span><span class="stat-label">schede depositate</span></div>
+  <div class="stat"><span class="stat-number">{{ counts.spoiled }}</span><span class="stat-label">schede di prova, non contate</span></div>
+  <div class="stat">
+    {% if board_is_valid %}
+      <span class="stat-number ok">✓</span><span class="stat-label">catena dei codici integra</span>
+    {% else %}
+      <span class="stat-number ko">✗</span><span class="stat-label">catena dei codici alterata</span>
+    {% endif %}
+  </div>
+</div>
 
-{% if search %}
-  {% if found %}
-    <p class="ok-box">Codice trovato in posizione {{ found | sort | join(', ') }}.</p>
-  {% else %}
+<form method="get" class="card search">
+  <label for="codice"><strong>Cerca il tuo codice di tracciamento</strong></label>
+  <div class="inline-form">
+    <input id="codice" name="codice" value="{{ search }}" placeholder="prime cifre, per esempio {{ code(entries[-1].tracking_code, short=True) if entries else '1A2B' }}" autocomplete="off">
+    <button type="submit">Cerca</button>
+  </div>
+
+  {% if too_short %}
+    <p class="notice">Scrivi almeno {{ election.min_search_length }} cifre del codice.</p>
+  {% elif search and found %}
+    <p class="ok-box">
+      Trovata: la scheda è in posizione
+      {% for sequence in found %}<a href="#riga-{{ sequence }}">{{ sequence }}</a>{{ ", " if not loop.last }}{% endfor %}.
+    </p>
+  {% elif search %}
     <p class="error">Nessuna scheda con un codice che inizia con «{{ search }}».</p>
   {% endif %}
-{% endif %}
+</form>
 
-<table class="board">
-  <thead>
-    <tr>
-      <th>N.</th>
-      <th>Circoscrizione</th>
-      <th>Stato</th>
-      <th>Impronta</th>
-      <th>Codice di tracciamento</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for entry in entries | reverse %}
-      <tr class="{{ 'found' if entry.sequence in found }} {{ 'spoiled' if entry.state != CAST }}">
-        <td>{{ entry.sequence }}</td>
-        <td>{{ config.districts[entry.district_index].name }}</td>
-        <td>{{ 'depositata' if entry.state == CAST else 'sprecata' }}</td>
-        <td class="mono">{{ code(entry.ballot_hash, short=True) }}…</td>
-        <td class="mono">{{ code(entry.tracking_code, short=True) }}…</td>
+<details class="advanced">
+  <summary>Come funziona la catena dei codici</summary>
+  <p>
+    Ogni codice di tracciamento si calcola dal codice precedente, dalla posizione, dallo stato
+    e dall'impronta della scheda. Se qualcuno togliesse o cambiasse una riga, tutti i codici
+    successivi cambierebbero e chi li ha conservati se ne accorgerebbe.
+  </p>
+</details>
+
+<div class="table-wrap">
+  <table class="board">
+    <thead>
+      <tr>
+        <th>N.</th>
+        <th>Circoscrizione</th>
+        <th>Stato</th>
+        <th>Impronta</th>
+        <th>Codice di tracciamento</th>
       </tr>
-    {% endfor %}
-  </tbody>
-</table>
+    </thead>
+    <tbody>
+      {% for entry in entries | reverse %}
+        <tr id="riga-{{ entry.sequence }}" class="{{ 'found' if entry.sequence in found }} {{ 'spoiled' if entry.state != CAST }}">
+          <td>{{ entry.sequence }}</td>
+          <td>{{ config.districts[entry.district_index].name }}</td>
+          <td>{{ 'depositata' if entry.state == CAST else 'di prova' }}</td>
+          <td class="mono">{{ code(entry.ballot_hash, short=True) }}…</td>
+          <td class="mono">{{ code(entry.tracking_code, short=True) }}…</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="muted">La bacheca è vuota: nessuno ha ancora votato.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block actions %}
+  {% call action_bar() %}
+    {% if closed %}
+      <a class="button" href="{{ url_for('verification') }}">Verifica l'elezione</a>
+    {% else %}
+      <a class="button" href="{{ url_for('closing') }}">Chiudi il voto e fai lo spoglio</a>
+      <a class="button button-secondary" href="{{ url_for('access') }}">Vota ancora</a>
+    {% endif %}
+  {% endcall %}
 {% endblock %}

@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% from "macro.html" import action_bar %}
+{% block title %}Prepara{% endblock %}
+{% block content %}
+<h1>Prepara la simulazione</h1>
+<p class="lead">
+  Scegli come votano gli elettori simulati dell'elezione di esempio. Liste, coalizioni e
+  candidati restano quelli della configurazione: cambia solo il modo in cui si vota.
+</p>
+
+{% if ready_now %}
+  <p class="ok-box">
+    La simulazione è pronta: {{ counts.cast }} schede depositate sulla bacheca.
+    Ora puoi votare anche tu.
+  </p>
+{% endif %}
+{% if failed %}
+  <p class="error">
+    La preparazione non è riuscita: {{ failed }}
+    {% if ready %}La simulazione precedente è ancora disponibile.{% endif %}
+  </p>
+{% endif %}
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+
+<div class="prepare-layout">
+  <form method="post" class="card prepare-form" id="prepara"
+        data-districts="{{ config.districts | length }}"
+        data-busy="Avvio della preparazione…">
+
+    <fieldset>
+      <legend>Modalità</legend>
+      <div class="option-cards">
+        {% for key, item in modes.items() %}
+          <label class="option-card">
+            <input type="radio" name="modalita" value="{{ key }}"
+                   {{ 'checked' if values.modalita == key }}
+                   data-max="{{ item.max_voters_per_district }}"
+                   data-seconds="{{ speeds[key] }}">
+            <span class="option-title">{{ item.label }}</span>
+            <span class="option-text">{{ item.description }}</span>
+          </label>
+        {% endfor %}
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Elettori simulati</legend>
+      <label class="field field-inline">
+        <span>Per ogni circoscrizione</span>
+        <input type="number" name="elettori" id="elettori" min="0"
+               max="{{ modes[values.modalita].max_voters_per_district if values.modalita in modes else 200 }}"
+               value="{{ values.elettori }}" required>
+      </label>
+      <p class="hint" id="totale-elettori">
+        Le circoscrizioni sono {{ config.districts | length }}. In modalità realistica al massimo
+        {{ modes.realistica.max_voters_per_district }} elettori per circoscrizione, in quella veloce
+        {{ modes.veloce.max_voters_per_district }}. Con 0 la bacheca parte vuota e voti solo tu.
+      </p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Tendenza di voto</legend>
+      <div class="option-list">
+        {% for key, item in orientations.items() %}
+          <label class="option-row">
+            <input type="radio" name="tendenza" value="{{ key }}" {{ 'checked' if values.tendenza == key }}>
+            <span>
+              <span class="option-title">{{ item.label }}</span>
+              <span class="option-text">{{ item.description }}</span>
+            </span>
+          </label>
+        {% endfor %}
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Altre scelte</legend>
+      <div class="field-row">
+        <label class="field">
+          <span>Schede bianche (%)</span>
+          <input type="number" name="bianche" min="0" max="{{ max_blank }}" value="{{ values.bianche }}" required>
+        </label>
+        <label class="field">
+          <span>Sfide del dispositivo (%)</span>
+          <input type="number" name="sfide" min="0" max="{{ max_spoil }}" value="{{ values.sfide }}" required>
+        </label>
+        <label class="field">
+          <span>Garanti</span>
+          <select name="garanti">
+            {% for value, label in guardian_options %}
+              <option value="{{ value }}" {{ 'selected' if value == values.garanti }}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+      <p class="hint">
+        Una sfida del dispositivo è una scheda aperta per controllo e poi scartata: resta visibile
+        sulla bacheca ma non viene contata, e l'elettore vota di nuovo.
+      </p>
+      <details class="advanced">
+        <summary>Seme casuale</summary>
+        <label class="field field-inline">
+          <span>Seme</span>
+          <input type="number" name="seme" min="0" value="{{ values.seme }}">
+        </label>
+        <p class="hint">
+          Con lo stesso seme e le stesse scelte gli elettori simulati votano allo stesso modo;
+          cambialo per ottenere un'altra elezione.
+        </p>
+      </details>
+    </fieldset>
+
+    <div class="form-footer">
+      <p class="estimate">
+        Tempo stimato: <strong id="stima">{{ estimate | duration if estimate is not none else "—" }}</strong>
+      </p>
+      {% if ready %}
+        <p class="hint">La simulazione attuale, con i voti e i risultati, verrà sostituita.</p>
+      {% endif %}
+      <button type="submit">Prepara la simulazione</button>
+      <p class="busy" hidden></p>
+    </div>
+  </form>
+
+  <aside class="side">
+    <div class="card">
+      <h2>L'elezione di esempio</h2>
+      <p>{{ config.seats }} seggi in {{ config.districts | length }} circoscrizioni
+        ({{ config.districts | map(attribute="name") | join(", ") }}).</p>
+      <ul class="plain">
+        {% for coalition in config.coalitions %}
+          <li><strong>{{ coalition.name }}</strong>:
+            {% for index in coalition.list_indices %}{{ config.list_names[index] }}{{ ", " if not loop.last }}{% endfor %}</li>
+        {% endfor %}
+        {% if single_lists %}<li><strong>Liste da sole</strong>: {{ single_lists | join(", ") }}</li>{% endif %}
+      </ul>
+      <p class="hint">
+        La tendenza di voto decide quanto spesso gli elettori simulati scelgono ciascuna coalizione;
+        ogni singolo voto resta casuale.
+      </p>
+    </div>
+
+    {% if ready %}
+      <div class="card">
+        <h2>Simulazione attuale</h2>
+        <dl class="facts">
+          <div><dt>Modalità</dt><dd>{{ mode.label if mode else "personalizzata" }}</dd></div>
+          <div><dt>Garanti</dt><dd>{{ election.guardian_count }}, ne servono {{ election.quorum }}</dd></div>
+          <div><dt>Bacheca</dt><dd>{{ counts.cast }} depositate, {{ counts.spoiled }} di prova</dd></div>
+          {% if host.settings %}
+            <div><dt>Tendenza</dt><dd>{{ orientations[host.settings.orientation].label }}</dd></div>
+            <div><dt>Seme</dt><dd>{{ host.settings.seed }}</dd></div>
+          {% endif %}
+          <div><dt>Stato</dt><dd>{{ "elezione chiusa" if closed else "voto aperto" }}</dd></div>
+        </dl>
+      </div>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}
+
+{% block actions %}
+  {% if ready %}
+    {% call action_bar() %}
+      {% if closed %}
+        <a class="button" href="{{ url_for('closing') }}">Guarda i risultati</a>
+      {% else %}
+        <a class="button" href="{{ url_for('access') }}">Vai a votare</a>
+      {% endif %}
+    {% endcall %}
+  {% endif %}
+{% endblock %}

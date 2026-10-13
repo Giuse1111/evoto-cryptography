@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Preparazione in corso{% endblock %}
+{% block head %}
+  <noscript><meta http-equiv="refresh" content="2"></noscript>
+{% endblock %}
+{% block content %}
+{% set settings = status.settings %}
+<h1>Preparazione in corso</h1>
+<p class="lead">
+  {% if settings %}
+    Modalità {{ modes[settings.mode].label | lower }}: {{ status.total }} elettori simulati,
+    {{ settings.guardian_count }} garanti (ne servono {{ settings.quorum }}).
+  {% endif %}
+  Quando tutto è pronto la pagina passa da sola al passo successivo.
+</p>
+
+<div class="card progress-card" id="avanzamento"
+     data-status-url="{{ url_for('status') }}"
+     data-ready-url="{{ url_for('prepare', pronta=1) }}"
+     data-form-url="{{ url_for('prepare') }}">
+  <ol class="phases-mini">
+    <li id="fase-cerimonia" class="{{ 'current' if status.phase == 'cerimonia' else 'done' }}">
+      <strong>Cerimonia delle chiavi</strong>
+      <span>I garanti creano insieme la chiave dell'elezione: ciascuno ne custodisce solo un pezzo.</span>
+    </li>
+    <li id="fase-voto" class="{{ 'current' if status.phase == 'voto' }}">
+      <strong>Voto degli elettori simulati</strong>
+      <span>Ogni scheda viene cifrata, accompagnata dalle prove e controllata dalla bacheca prima di entrare.</span>
+    </li>
+  </ol>
+
+  <progress id="barra" max="{{ status.total or 1 }}" value="{{ status.done }}">
+    {{ status.done }} su {{ status.total }}
+  </progress>
+
+  <p class="progress-text">
+    <span id="conteggio">{{ status.done }} elettori su {{ status.total }}</span>
+    <span id="rimanente">{% if remaining is not none %}· mancano {{ remaining | duration }}{% endif %}</span>
+  </p>
+</div>
+
+<p class="hint">
+  Intanto puoi leggere la <a href="{{ url_for('index') }}">panoramica</a>: le altre pagine si aprono
+  quando la simulazione è pronta.
+</p>
+{% endblock %}
