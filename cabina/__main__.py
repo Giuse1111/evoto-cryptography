@@ -8,8 +8,9 @@ Uso:
 
 All'avvio viene preparata la prima simulazione (cerimonia delle chiavi
 e voto degli elettori simulati); poi il server resta in ascolto solo sul
-computer locale (127.0.0.1). Dalla pagina «Prepara» del browser si
-possono preparare altre simulazioni senza riavviare il server.
+computer locale (127.0.0.1). Nel browser si comincia dalla pagina
+«Prepara»: lì si conferma questa simulazione oppure se ne prepara
+un'altra, senza riavviare il server.
 """
 
 import argparse
@@ -182,14 +183,18 @@ def main(argv: list[str] | None = None) -> None:
             print(f"  elettori simulati: {done}/{total}", flush=True)
 
     start = time.perf_counter()
-    host.prepare(settings, background=False, progress=progress)
+    # La prima simulazione va ancora scelta dalla pagina «Prepara».
+    host.prepare(settings, background=False, progress=progress, confirm=False)
 
     if host.status.error is not None:
         print(f"Preparazione non riuscita: {host.status.error}", file=sys.stderr)
         sys.exit(1)
 
     print(f"Pronto in {time.perf_counter() - start:.1f} s.")
-    print(f"Apri http://127.0.0.1:{arguments.porta} nel browser (Ctrl+C per uscire).\n")
+    print(
+        f"Apri http://127.0.0.1:{arguments.porta} nel browser e comincia da «Prepara» "
+        "(Ctrl+C per uscire).\n"
+    )
 
     app = create_app(host, registry_path=registry_path)
 

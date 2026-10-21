@@ -17,11 +17,12 @@
       <a class="brand" href="{{ url_for('index') }}" {% if active == 'home' %}aria-current="page"{% endif %}>
         {{ icon("urna", 26) }}
         <span>eVoto</span>
-        <span class="brand-sub">demo di voto verificabile</span>
       </a>
 
       {% if preparing %}
         <span class="badge badge-busy">Simulazione in preparazione</span>
+      {% elif unconfirmed %}
+        <span class="badge badge-busy">Si comincia da Prepara</span>
       {% elif not ready %}
         <span class="badge badge-idle">Nessuna simulazione</span>
       {% elif closed %}
@@ -63,7 +64,7 @@
   <footer class="foot">
     <div class="wrap">
       <p>
-        Progetto didattico: elettori, candidati e codici sono simulati. Non usare questa demo per
+        Progetto didattico: elettori, documenti e candidati sono fittizi. Non usare questa demo per
         elezioni vere.
         {% if election %}
           Modalità {{ mode.label | lower if mode else "personalizzata" }}:

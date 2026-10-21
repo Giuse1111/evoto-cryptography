@@ -7,7 +7,7 @@
 
 <section class="hero">
   <div class="hero-text">
-    <p class="kicker">Demo di voto elettronico verificabile</p>
+    <p class="kicker">Demo di voto elettronico</p>
     <h1>Vota, ritrova la tua scheda e controlla il risultato</h1>
     <p class="lead">
       eVoto simula un'elezione online dall'inizio alla fine. Voti come un elettore, segui lo
@@ -39,12 +39,14 @@
     <p class="status-line">
       {% if preparing %}
         <span class="dot dot-busy"></span> Nuova simulazione in preparazione: {{ status.done }} elettori su {{ status.total }}.
+      {% elif unconfirmed %}
+        <span class="dot dot-busy"></span> Simulazione pronta: per iniziare sceglila nella pagina «Prepara».
       {% elif not ready %}
         <span class="dot dot-idle"></span> Nessuna simulazione pronta.
       {% elif closed %}
         <span class="dot dot-closed"></span> Voto chiuso: i risultati sono pronti.
       {% else %}
-        <span class="dot dot-open"></span> Voto aperto: puoi votare con i codici dimostrativi.
+        <span class="dot dot-open"></span> Voto aperto: puoi votare con le carte d'identità fittizie.
       {% endif %}
     </p>
   </aside>
@@ -91,21 +93,22 @@
 <section aria-labelledby="come-si-usa">
   <h2 id="come-si-usa" class="section-title">Come si usa</h2>
   <p class="section-lead">
-    Il menu in alto segue questi cinque passi. All'avvio una simulazione è già pronta:
-    puoi cominciare direttamente dal voto.
+    Il menu in alto segue questi cinque passi, nell'ordine. Si comincia da «Prepara»: puoi usare
+    con un clic la simulazione già pronta all'avvio, oppure sceglierne una tu.
   </p>
   <ol class="howto">
     <li>
       <h3>Prepara</h3>
       <p>
         Scegli quanti elettori simulati votano e come: una coalizione in testa, un testa a testa,
-        tutte le liste alla pari. Puoi anche cambiare il numero di garanti.
+        tutte le liste alla pari. Puoi anche cambiare il numero di garanti, oppure tenere la
+        simulazione già pronta.
       </p>
     </li>
     <li>
       <h3>Vota</h3>
       <p>
-        Scegli un codice elettore e compila la scheda: una lista e, se vuoi, fino a
+        Accedi con una carta d'identità fittizia e compila la scheda: una lista e, se vuoi, fino a
         {{ rules.max_preferences }} preferenze per candidati della stessa lista. Prima di depositarla
         puoi sfidare il dispositivo per controllare che abbia registrato davvero la tua scelta.
       </p>

@@ -37,7 +37,7 @@
 {% block actions %}
   {% if can_vote %}
     {% call action_bar() %}
-      <a class="button" href="{{ url_for('ballot', voter_id=report.voter_id) }}">Vota di nuovo come {{ report.voter_id }}</a>
+      <a class="button" href="{{ url_for('ballot', voter_id=report.voter_id) }}">Vota di nuovo</a>
     {% endcall %}
   {% endif %}
 {% endblock %}

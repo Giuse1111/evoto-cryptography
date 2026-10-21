@@ -1,6 +1,6 @@
 # eVoto — Specifica tecnica condivisa F1
 
-**Versione:** 0.8  
+**Versione:** 0.9  
 **Progetto:** Voto elettronico verificabile per elezioni politiche  
 **Corso:** Crittografia — LM Sicurezza Informatica, Università degli Studi di Milano  
 **Componenti del gruppo:**
@@ -2156,7 +2156,7 @@ lista degli aventi diritto (VoterRoll)
 
 ---
 
-# 48. Stato del progetto (v0.8)
+# 48. Stato del progetto (v0.9)
 
 ```text
 F0 ambiente e repository                          completata
@@ -2220,7 +2220,7 @@ Persona B:
 - tesina (F8): capitoli 4 (protocollo ed esempio a numeri piccoli), 6 (implementazione) e 8 (esperimenti E1-E5);
 - prova della demo all'esame (F9) con la cabina.
 
-Gli esperimenti E2 ed E5 (sezione 50), il notebook didattico (sezione 51) e la cabina elettorale web (sezione 52) di Persona B sono completati. La revisione completa del progetto è descritta nella sezione 53; dalla v0.8 la cabina è un sito guidato, con simulazioni configurabili dal browser (sezione 52).
+Gli esperimenti E2 ed E5 (sezione 50), il notebook didattico (sezione 51) e la cabina elettorale web (sezione 52) di Persona B sono completati. La revisione completa del progetto è descritta nella sezione 53; dalla v0.8 la cabina è un sito guidato, con simulazioni configurabili dal browser, e dalla v0.9 comincia sempre dalla pagina «Prepara» (sezione 52).
 
 ---
 
@@ -2236,6 +2236,7 @@ Gli esperimenti E2 ed E5 (sezione 50), il notebook didattico (sezione 51) e la c
 | 0.6 | F7: esperimenti E2 (garanti assenti) ed E5 (costi di una scheda), sezione 50; notebook didattico, sezione 51; cabina elettorale web con verificatore integrato, sezione 52 |
 | 0.7 | Revisione completa (sezione 53): vincolo candidati/seggi ed esempio a 15 seggi; controlli di appartenenza una sola volta per scheda; V3 controlla il numero di liste; verificatore robusto ai registri malformati; comando `python -m verifica`; quorum della cerimonia e K diverso da 1 |
 | 0.8 | Cabina guidata (sezione 52): panoramica per chi usa la demo, menu a passi, pagina «Prepara» con simulazioni configurabili e preparazione in background, spoglio e risultati in un'unica pagina, ricevuta e sfida idempotenti, registro non scrivibile segnalato |
+| 0.9 | Cabina (sezione 52): si comincia sempre da «Prepara», dove la simulazione preparata all'avvio si conferma con un clic o si sostituisce, e fino ad allora le pagine del voto sono bloccate; carte d'identità fittizie al posto dei codici `NORD-01`; pagina di conferma ridotta a deposito o sfida, con l'impronta nei dettagli tecnici |
 
 ---
 
@@ -2378,7 +2379,7 @@ uv run python -m cabina [--gruppo demo|didattico] [--elettori N] [--garanti N] [
                         [--porta N] [--registro FILE] [--config FILE] [--seme N]
 ```
 
-Default: gruppo `DEMO_PARAMS` (modalità realistica), 10 elettori simulati per circoscrizione, 5 garanti, quorum 3, porta 8000. Le opzioni descrivono la prima simulazione, preparata prima di avviare il server; valgono gli stessi limiti della pagina «Prepara» e il percorso di `--registro` si controlla all'avvio. Il server di sviluppo di Flask ascolta solo su `127.0.0.1`.
+Default: gruppo `DEMO_PARAMS` (modalità realistica), 10 elettori simulati per circoscrizione, 5 garanti, quorum 3, porta 8000. Le opzioni descrivono la prima simulazione, preparata prima di avviare il server ma ancora da confermare nella pagina «Prepara» (v0.9); valgono gli stessi limiti della pagina «Prepara» e il percorso di `--registro` si controlla all'avvio. Il server di sviluppo di Flask ascolta solo su `127.0.0.1`.
 
 ## Struttura
 
@@ -2392,7 +2393,7 @@ Default: gruppo `DEMO_PARAMS` (modalità realistica), 10 elettori simulati per c
 
 ## Stato della sessione
 
-All'avvio `ElectionSession` esegue `run_key_ceremony`, costruisce i layout delle circoscrizioni, crea la bacheca e la lista degli aventi diritto con i codici dimostrativi (`NORD-01` ... `NORD-10`, uno per elettore che vota dal browser). `prefill` aggiunge agli aventi diritto gli elettori simulati, che votano con `random_choice` e lo stesso percorso del browser; i pesi delle liste, le schede bianche e la probabilità di sprecare prima una scheda sono parametri. `prefill` misura anche il tempo medio di una scheda (`seconds_per_ballot`), usato per stimare le simulazioni successive.
+All'avvio `ElectionSession` esegue `run_key_ceremony`, costruisce i layout delle circoscrizioni, crea la bacheca e la lista degli aventi diritto con le carte d'identità fittizie degli elettori che votano dal browser (v0.9): dieci per circoscrizione, numeri nel formato della carta d'identità elettronica (due lettere, cinque cifre, due lettere, senza I, O e Q) tutti diversi e generati da `random.Random("carte-<election_id>")`, quindi sempre uguali per la stessa elezione e senza legame con documenti reali. Si accettano anche minuscoli, con spazi o trattini (`normalize_card`). In un sistema reale il numero da solo non basterebbe: l'elettore accederebbe con SPID o con la CIE e il suo PIN. `prefill` aggiunge agli aventi diritto gli elettori simulati, che votano con `random_choice` e lo stesso percorso del browser; i pesi delle liste, le schede bianche e la probabilità di sprecare prima una scheda sono parametri. `prefill` misura anche il tempo medio di una scheda (`seconds_per_ballot`), usato per stimare le simulazioni successive.
 
 Lo stato cambia nel tempo, quindi la sessione è una classe; le strutture di `evoto` restano immutabili e vengono sostituite a ogni passo. Un `RLock` protegge lo stato, perché il server serve più richieste insieme. Le share segrete dei garanti simulati restano in `KeyCeremony.secret_shares` e non vengono mai pubblicate.
 
@@ -2421,6 +2422,8 @@ La pagina «Prepara» cambia solo il modo di votare: la struttura dell'elezione 
 | Garanti e quorum | 3 e 2, 5 e 3, 7 e 4 (dalla riga di comando da 1 a 9) |
 | Seme | intero non negativo |
 
+Si comincia sempre da qui (v0.9). `DemoHost.confirmed` indica che la simulazione attuale è stata scelta nella pagina: la simulazione dell'avvio nasce con `confirmed = False` (`prepare(..., confirm=False)`) e si conferma con «Usa questa simulazione» (`DemoHost.confirm()`), senza prepararne un'altra; una simulazione preparata dal browser è confermata appena pronta. Finché `confirmed` è falso la panoramica indica «Prepara», il menu blocca gli altri passi e le loro pagine rimandano a `/prepara`.
+
 `DemoHost.prepare(settings)` controlla le scelte e avvia un thread che esegue la cerimonia e `prefill`; `PreparationStatus` riporta fase (`cerimonia`, `voto`, `pronta`, `errore`), elettori fatti e totali, stima iniziale e tempo mancante. Si prepara una sola simulazione alla volta. Quando è pronta sostituisce la precedente; se fallisce, la precedente resta disponibile e la pagina mostra l'errore. La stima della durata è `elettori · circoscrizioni · (1 + sfide) · secondi per scheda`, con la velocità misurata dall'ultima simulazione della stessa modalità.
 
 ## Pagine
@@ -2428,7 +2431,7 @@ La pagina «Prepara» cambia solo il modo di votare: la struttura dell'elezione 
 | Indirizzo | Contenuto |
 |---|---|
 | `/` | panoramica per chi usa la demo: garanzie del sistema, passi della prova, esperimenti da provare, glossario, simulazione attuale e azione consigliata |
-| `/prepara` | 1. scelte della simulazione con la durata stimata; durante la preparazione, pagina di avanzamento |
+| `/prepara` | 1. simulazione già pronta da confermare («Usa questa simulazione», poi `/cabina`) e scelte di una nuova simulazione con la durata stimata; durante la preparazione, pagina di avanzamento |
 | `/stato` | avanzamento della preparazione in JSON, letto dalla pagina di avanzamento |
 | `/cabina`, `/cabina/<codice>` | 2. scelta dell'elettore e scheda; dopo un errore la scheda torna con le scelte fatte |
 | `/scheda/<token>/deposita`, `/scheda/<token>/sfida` | deposito o sfida, poi reindirizzamento a `/ricevuta/<token>` o `/sfida/<token>` |
@@ -2437,7 +2440,7 @@ La pagina «Prepara» cambia solo il modo di votare: la struttura dell'elezione 
 | `/verifica` | 5. verificatore, manomissioni dimostrative, comando da terminale e registro da scaricare |
 | `/registro.json` | registro pubblico, anche nelle versioni manomesse |
 
-Mentre una simulazione si prepara, o se non ce n'è nessuna, le pagine dell'elezione rimandano a `/prepara`; la panoramica resta sempre disponibile.
+Mentre una simulazione si prepara, se non ce n'è nessuna o se non è ancora stata scelta nella pagina «Prepara», le pagine dell'elezione rimandano a `/prepara`; la panoramica resta sempre disponibile.
 
 ## Registro pubblico
 
@@ -2460,7 +2463,9 @@ Le manomissioni modificano solo il JSON pubblicato, mai lo stato dell'elezione:
 
 ## Interfaccia
 
-Il menu a passi (Prepara, Vota, Bacheca, Spoglio e risultati, Verifica) ha una voce per pagina: segna con una spunta i passi fatti e disattiva quelli non ancora disponibili (la verifica prima dello spoglio, tutto tranne «Prepara» durante la preparazione). In fondo a ogni pagina un riquadro indica il passo successivo. Ogni controllo del verificatore è descritto anche a parole.
+La pagina di conferma riepiloga la scelta e offre solo le due azioni, deposito o sfida del dispositivo (v0.9). L'impronta della scheda resta nei dettagli tecnici: il dispositivo la fissa prima della decisione, ma per ritrovare il voto sulla bacheca l'elettore usa il codice di tracciamento della ricevuta.
+
+Il menu a passi (Prepara, Vota, Bacheca, Spoglio e risultati, Verifica) ha una voce per pagina: segna con una spunta i passi fatti e disattiva quelli non ancora disponibili (tutto tranne «Prepara» finché la simulazione non è stata scelta o mentre si prepara, la verifica prima dello spoglio). In fondo a ogni pagina un riquadro indica il passo successivo. Ogni controllo del verificatore è descritto anche a parole.
 
 Il JavaScript serve solo alla comodità: nella scheda una preferenza segna la sua lista, le preferenze di altre liste vengono tolte, i limiti R4 e R5 vengono segnalati; i moduli lenti disattivano i pulsanti dopo il primo clic e mostrano i secondi trascorsi; la pagina «Prepara» aggiorna la stima e la pagina di avanzamento legge `/stato` ogni secondo. L'opzione «dispositivo scorretto» spegne i controlli della scheda: la scheda viene rifiutata comunque, perché le prove non si costruiscono (E4).
 

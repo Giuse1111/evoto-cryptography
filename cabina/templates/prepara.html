@@ -1,11 +1,12 @@
 {% extends "base.html" %}
-{% from "macro.html" import action_bar %}
+{% from "macro.html" import action_bar, icon %}
 {% block title %}Prepara{% endblock %}
 {% block content %}
 <h1>Prepara la simulazione</h1>
 <p class="lead">
-  Scegli come votano gli elettori simulati dell'elezione di esempio. Liste, coalizioni e
-  candidati restano quelli della configurazione: cambia solo il modo in cui si vota.
+  Primo passo della prova: scegli come votano gli elettori simulati dell'elezione di esempio.
+  Liste, coalizioni e candidati restano quelli della configurazione: cambia solo il modo in cui
+  si vota.
 </p>
 
 {% if ready_now %}
@@ -17,10 +18,37 @@
 {% if failed %}
   <p class="error">
     La preparazione non è riuscita: {{ failed }}
-    {% if ready %}La simulazione precedente è ancora disponibile.{% endif %}
+    {% if available %}La simulazione precedente è ancora disponibile.{% endif %}
   </p>
 {% endif %}
 {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+
+{% if unconfirmed %}
+  <section class="card ready-card" aria-labelledby="gia-pronta">
+    <div class="ready-text">
+      <h2 id="gia-pronta">Una simulazione è già pronta</h2>
+      <p>
+        È stata preparata all'avvio del server: puoi usarla subito, oppure cambiare le scelte qui
+        sotto e prepararne un'altra.
+      </p>
+      <dl class="facts facts-inline">
+        <div><dt>Modalità</dt><dd>{{ mode.label if mode else "personalizzata" }} ({{ election.params.p.bit_length() }} bit)</dd></div>
+        {% if host.settings %}
+          <div><dt>Elettori simulati</dt><dd>{{ host.settings.voters_per_district }} per circoscrizione</dd></div>
+          <div><dt>Tendenza</dt><dd>{{ orientations[host.settings.orientation].label }}</dd></div>
+        {% endif %}
+        <div><dt>Garanti</dt><dd>{{ election.guardian_count }}, ne servono {{ election.quorum }}</dd></div>
+        <div><dt>Bacheca</dt><dd>{{ counts.cast }} depositate, {{ counts.spoiled }} di prova</dd></div>
+      </dl>
+    </div>
+    <form method="post" class="ready-action">
+      <input type="hidden" name="azione" value="usa">
+      <button type="submit" class="button-big">Usa questa simulazione {{ icon("freccia", 18) }}</button>
+    </form>
+  </section>
+
+  <h2 class="section-title">Oppure prepara una nuova simulazione</h2>
+{% endif %}
 
 <div class="prepare-layout">
   <form method="post" class="card prepare-form" id="prepara"
@@ -114,7 +142,9 @@
       <p class="estimate">
         Tempo stimato: <strong id="stima">{{ estimate | duration if estimate is not none else "—" }}</strong>
       </p>
-      {% if ready %}
+      {% if unconfirmed %}
+        <p class="hint">La simulazione già pronta verrà sostituita.</p>
+      {% elif available %}
         <p class="hint">La simulazione attuale, con i voti e i risultati, verrà sostituita.</p>
       {% endif %}
       <button type="submit">Prepara la simulazione</button>

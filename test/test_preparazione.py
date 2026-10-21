@@ -381,7 +381,8 @@ def test_navigation_follows_the_election():
     }
     assert next_step(host)[1] == "access"
 
-    session.cast(session.prepare("NORD-01", VoterChoice(list_index=0)).token)
+    card = next(iter(session.demo_voters))
+    session.cast(session.prepare(card, VoterChoice(list_index=0)).token)
 
     assert states()["vota"] == "fatto"
     assert next_step(host)[1] == "closing"
@@ -401,6 +402,119 @@ def test_navigation_follows_the_election():
 
     assert states()["verifica"] == "fatto"
     assert next_step(host)[1] == "prepare"
+
+
+def test_startup_simulation_must_be_chosen_in_prepare():
+    """
+    La simulazione preparata all'avvio non porta direttamente al voto:
+    la panoramica indica «Prepara», le pagine del voto rimandano lì e il
+    menu le blocca. Con «Usa questa simulazione» la stessa elezione,
+    senza prepararne un'altra, passa al voto.
+    """
+
+    host = DemoHost(CONFIG)
+    host.prepare(FAST, background=False, confirm=False)
+    session = host.session
+    client = create_app(host).test_client()
+
+    assert not host.confirmed
+    assert not host.ready
+    assert next_step(host) == ("Inizia: prepara la simulazione", "prepare")
+    assert [(step.done, step.locked) for step in navigation(host)] == [
+        (False, False),
+        (False, True),
+        (False, True),
+        (False, True),
+        (False, True),
+    ]
+
+    page = client.get("/").get_data(as_text=True)
+
+    assert 'href="/prepara">Inizia: prepara la simulazione' in page
+    assert "Si comincia da Prepara" in page
+
+    card = next(iter(session.demo_voters))
+
+    for path in ("/cabina", f"/cabina/{card}", "/bacheca", "/spoglio"):
+        assert client.get(path).headers["Location"].endswith("/prepara")
+
+    page = client.get("/prepara").get_data(as_text=True)
+
+    assert "Una simulazione è già pronta" in page
+    assert "4 per circoscrizione" in page
+    assert "Usa questa simulazione" in page
+
+    response = client.post("/prepara", data={"azione": "usa"})
+
+    assert response.headers["Location"].endswith("/cabina")
+    assert host.confirmed and host.ready
+    assert host.session is session
+    assert navigation(host)[0].done
+    assert next_step(host) == ("Vai a votare", "access")
+    assert client.get("/cabina").status_code == 200
+    assert "Una simulazione è già pronta" not in client.get("/prepara").get_data(as_text=True)
+
+
+def test_a_new_preparation_counts_as_chosen():
+    """
+    Preparare dal browser una nuova simulazione vale come scelta, anche
+    se quella dell'avvio non era stata confermata.
+    """
+
+    host = DemoHost(CONFIG)
+    host.prepare(FAST, background=False, confirm=False)
+    host.prepare(replace(FAST, seed=5), background=False)
+
+    assert host.confirmed
+    assert host.settings.seed == 5
+
+
+def test_confirm_needs_a_simulation():
+    """
+    Senza una simulazione pronta non c'è niente da confermare: la pagina
+    mostra il messaggio e le pagine del voto restano bloccate.
+    """
+
+    host = DemoHost(CONFIG)
+
+    with pytest.raises(ValueError, match="Non c'è ancora una simulazione"):
+        host.confirm()
+
+    client = create_app(host).test_client()
+    page = client.post("/prepara", data={"azione": "usa"}).get_data(as_text=True)
+
+    assert "Non c&#39;è ancora una simulazione" in page
+    assert not host.confirmed
+    assert DemoHost(CONFIG, confirmed=True).confirmed is False
+
+
+def test_command_line_starts_from_prepare(monkeypatch):
+    """
+    La riga di comando prepara la prima simulazione ma non la conferma:
+    nel browser si comincia comunque da «Prepara».
+    """
+
+    started = {}
+
+    class FakeApp:
+        def run(self, **options):
+            started.update(options)
+
+    def fake_create_app(host, registry_path=None):
+        started["demo"] = host
+        return FakeApp()
+
+    monkeypatch.setattr("cabina.__main__.create_app", fake_create_app)
+
+    main(["--gruppo", "didattico", "--elettori", "1", "--porta", "8123"])
+
+    host = started["demo"]
+
+    assert started["port"] == 8123
+    assert started["host"] == "127.0.0.1"
+    assert host.session.counts()["cast"] == 3
+    assert host.mode is MODES["veloce"]
+    assert not host.confirmed
 
 
 def test_prepare_page_from_the_browser():

@@ -7,15 +7,9 @@
 <h1>Deposita o controlla</h1>
 
 <div class="card choice-summary">
-  <p class="muted">Elettore {{ pending.voter_id }} · circoscrizione {{ district.name }}</p>
+  <p class="muted">Carta d'identità n. {{ pending.voter_id }} · circoscrizione {{ district.name }}</p>
   <p class="lead">Hai scelto: <strong>{{ description }}</strong></p>
-  <p>
-    La scheda è già chiusa nella sua busta digitale: {{ ciphertexts }} caselle cifrate e
-    {{ proofs }} prove che rispetta le regole. Nessuno può leggerla, ma chiunque può controllare
-    che sia valida.
-  </p>
-  <p class="muted">Impronta della scheda</p>
-  <p class="code-big">{{ code(pending.prepared.ballot_hash) }}</p>
+  <p>La scheda è già chiusa nella sua busta digitale: nessuno può leggerla.</p>
 </div>
 
 <div class="choices">
@@ -23,7 +17,7 @@
         data-busy="La bacheca controlla le prove…">
     <h2>Deposita la scheda</h2>
     <p>
-      La bacheca controlla le prove, pubblica la scheda e ti dà il codice di tracciamento.
+      La bacheca controlla la scheda, la pubblica e ti dà il codice di tracciamento da conservare.
       Dopo il deposito non puoi più votare.
     </p>
     <button type="submit">Deposita la scheda</button>
@@ -41,4 +35,16 @@
     <p class="busy" hidden></p>
   </form>
 </div>
+
+<details class="advanced">
+  <summary>Dettagli tecnici della scheda</summary>
+  <p>
+    La scheda contiene {{ ciphertexts }} caselle cifrate e {{ proofs }} prove a conoscenza zero
+    che rispetta le regole R1–R5. La sua impronta è
+    <span class="mono">{{ code(pending.prepared.ballot_hash, short=True) }}…</span>: il dispositivo
+    la fissa prima che tu decida se depositare o sfidare, quindi non può cambiare la scheda dopo.
+    Per ritrovare il voto sulla bacheca non serve l'impronta: usa il codice di tracciamento che
+    ricevi dopo il deposito.
+  </p>
+</details>
 {% endblock %}

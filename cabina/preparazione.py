@@ -11,6 +11,10 @@ La preparazione (cerimonia delle chiavi e voto degli elettori simulati)
 gira in un thread separato, così la pagina può mostrare l'avanzamento.
 Il server serve una sola elezione alla volta: DemoHost la conserva e la
 sostituisce quando una nuova simulazione è pronta.
+
+Il sito comincia sempre da «Prepara»: la simulazione preparata all'avvio
+del server va confermata con un clic (oppure sostituita) prima di poter
+votare, così chi usa la demo non salta il primo passo.
 """
 
 from collections.abc import Callable
@@ -380,6 +384,10 @@ class DemoHost:
 
     Mentre una nuova simulazione si prepara, il server mostra solo la
     pagina di avanzamento; quando è pronta, sostituisce la precedente.
+
+    confirmed indica che la simulazione attuale è stata scelta dalla
+    pagina «Prepara», preparandola oppure confermando quella già pronta:
+    finché è False le pagine del voto restano bloccate.
     """
 
     def __init__(
@@ -387,9 +395,11 @@ class DemoHost:
         config: ElectionConfig,
         session: ElectionSession | None = None,
         settings: SimulationSettings | None = None,
+        confirmed: bool = False,
     ) -> None:
         self.config = config
         self.session = session
+        self.confirmed = confirmed and session is not None
         self.registry_warning: str | None = None
 
         # Scelte della simulazione attuale: None se la sessione è stata
@@ -424,6 +434,28 @@ class DemoHost:
         session = self.session
 
         return None if session is None else mode_of(session.params)
+
+    @property
+    def ready(self) -> bool:
+        """
+        C'è una simulazione pronta e confermata: si può votare.
+        """
+
+        return self.session is not None and self.confirmed and not self.preparing
+
+    def confirm(self) -> None:
+        """
+        Conferma la simulazione già pronta, senza prepararne un'altra.
+        """
+
+        with self._lock:
+            if self._status.running:
+                raise ValueError("Una simulazione è già in preparazione.")
+
+            if self.session is None:
+                raise ValueError("Non c'è ancora una simulazione da confermare.")
+
+            self.confirmed = True
 
     def form_defaults(self) -> SimulationSettings:
         """
@@ -503,13 +535,16 @@ class DemoHost:
         settings: SimulationSettings,
         background: bool = True,
         progress: Callable[[int, int], None] | None = None,
+        confirm: bool = True,
     ) -> None:
         """
         Prepara una nuova simulazione con le scelte indicate.
 
         Con background=False lavora nel thread chiamante (lo usano la
         riga di comando all'avvio e i test). progress, se indicato,
-        riceve anche lui l'avanzamento.
+        riceve anche lui l'avanzamento. Con confirm=False la simulazione
+        pronta va ancora confermata dalla pagina «Prepara»: è il caso
+        della simulazione preparata all'avvio del server.
         """
 
         settings.validate()
@@ -529,11 +564,11 @@ class DemoHost:
         if background:
             threading.Thread(
                 target=self._run,
-                args=(settings, progress),
+                args=(settings, progress, confirm),
                 daemon=True,
             ).start()
         else:
-            self._run(settings, progress)
+            self._run(settings, progress, confirm)
 
     def _progress(self, done: int, total: int) -> None:
         with self._lock:
@@ -548,6 +583,7 @@ class DemoHost:
         self,
         settings: SimulationSettings,
         progress: Callable[[int, int], None] | None,
+        confirm: bool,
     ) -> None:
         def report(done: int, total: int) -> None:
             self._progress(done, total)
@@ -592,5 +628,6 @@ class DemoHost:
             self._remember_speed(session)
             self.session = session
             self.settings = settings
+            self.confirmed = confirm
             self.registry_warning = None
             self._status = PreparationStatus()
