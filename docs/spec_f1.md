@@ -2236,7 +2236,7 @@ Gli esperimenti E2 ed E5 (sezione 50), il notebook didattico (sezione 51) e la c
 | 0.6 | F7: esperimenti E2 (garanti assenti) ed E5 (costi di una scheda), sezione 50; notebook didattico, sezione 51; cabina elettorale web con verificatore integrato, sezione 52 |
 | 0.7 | Revisione completa (sezione 53): vincolo candidati/seggi ed esempio a 15 seggi; controlli di appartenenza una sola volta per scheda; V3 controlla il numero di liste; verificatore robusto ai registri malformati; comando `python -m verifica`; quorum della cerimonia e K diverso da 1 |
 | 0.8 | Cabina guidata (sezione 52): panoramica per chi usa la demo, menu a passi, pagina «Prepara» con simulazioni configurabili e preparazione in background, spoglio e risultati in un'unica pagina, ricevuta e sfida idempotenti, registro non scrivibile segnalato |
-| 0.9 | La cabina comincia sempre da «Prepara» (sezione 52): la simulazione preparata all'avvio si conferma con un clic o si sostituisce; fino ad allora le pagine del voto sono bloccate |
+| 0.9 | Cabina (sezione 52): si comincia sempre da «Prepara», dove la simulazione preparata all'avvio si conferma con un clic o si sostituisce, e fino ad allora le pagine del voto sono bloccate; carte d'identità fittizie al posto dei codici `NORD-01`; pagina di conferma ridotta a deposito o sfida, con l'impronta nei dettagli tecnici |
 
 ---
 
@@ -2393,7 +2393,7 @@ Default: gruppo `DEMO_PARAMS` (modalità realistica), 10 elettori simulati per c
 
 ## Stato della sessione
 
-All'avvio `ElectionSession` esegue `run_key_ceremony`, costruisce i layout delle circoscrizioni, crea la bacheca e la lista degli aventi diritto con i codici dimostrativi (`NORD-01` ... `NORD-10`, uno per elettore che vota dal browser). `prefill` aggiunge agli aventi diritto gli elettori simulati, che votano con `random_choice` e lo stesso percorso del browser; i pesi delle liste, le schede bianche e la probabilità di sprecare prima una scheda sono parametri. `prefill` misura anche il tempo medio di una scheda (`seconds_per_ballot`), usato per stimare le simulazioni successive.
+All'avvio `ElectionSession` esegue `run_key_ceremony`, costruisce i layout delle circoscrizioni, crea la bacheca e la lista degli aventi diritto con le carte d'identità fittizie degli elettori che votano dal browser (v0.9): dieci per circoscrizione, numeri nel formato della carta d'identità elettronica (due lettere, cinque cifre, due lettere, senza I, O e Q) tutti diversi e generati da `random.Random("carte-<election_id>")`, quindi sempre uguali per la stessa elezione e senza legame con documenti reali. Si accettano anche minuscoli, con spazi o trattini (`normalize_card`). In un sistema reale il numero da solo non basterebbe: l'elettore accederebbe con SPID o con la CIE e il suo PIN. `prefill` aggiunge agli aventi diritto gli elettori simulati, che votano con `random_choice` e lo stesso percorso del browser; i pesi delle liste, le schede bianche e la probabilità di sprecare prima una scheda sono parametri. `prefill` misura anche il tempo medio di una scheda (`seconds_per_ballot`), usato per stimare le simulazioni successive.
 
 Lo stato cambia nel tempo, quindi la sessione è una classe; le strutture di `evoto` restano immutabili e vengono sostituite a ogni passo. Un `RLock` protegge lo stato, perché il server serve più richieste insieme. Le share segrete dei garanti simulati restano in `KeyCeremony.secret_shares` e non vengono mai pubblicate.
 
@@ -2462,6 +2462,8 @@ Le manomissioni modificano solo il JSON pubblicato, mai lo stato dell'elezione:
 | `garante` | `response + 1` nella prima prova di Schnorr del garante 1 | V2 |
 
 ## Interfaccia
+
+La pagina di conferma riepiloga la scelta e offre solo le due azioni, deposito o sfida del dispositivo (v0.9). L'impronta della scheda resta nei dettagli tecnici: il dispositivo la fissa prima della decisione, ma per ritrovare il voto sulla bacheca l'elettore usa il codice di tracciamento della ricevuta.
 
 Il menu a passi (Prepara, Vota, Bacheca, Spoglio e risultati, Verifica) ha una voce per pagina: segna con una spunta i passi fatti e disattiva quelli non ancora disponibili (tutto tranne «Prepara» finché la simulazione non è stata scelta o mentre si prepara, la verifica prima dello spoglio). In fondo a ogni pagina un riquadro indica il passo successivo. Ogni controllo del verificatore è descritto anche a parole.
 
