@@ -22,6 +22,8 @@
 
       {% if preparing %}
         <span class="badge badge-busy">Simulazione in preparazione</span>
+      {% elif unconfirmed %}
+        <span class="badge badge-busy">Si comincia da Prepara</span>
       {% elif not ready %}
         <span class="badge badge-idle">Nessuna simulazione</span>
       {% elif closed %}

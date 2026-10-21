@@ -359,13 +359,22 @@ def test_parse_choice():
 
 def test_web_flow(election, tmp_path):
     """
-    Il percorso della demo all'esame: accesso, scheda, sfida, nuovo
-    voto, ricevuta, bacheca, chiusura con 3 garanti su 5, risultati,
-    verifica, registro manomesso.
+    Il percorso della demo all'esame: conferma della simulazione già
+    pronta, accesso, scheda, sfida, nuovo voto, ricevuta, bacheca,
+    chiusura con 3 garanti su 5, risultati, verifica, registro manomesso.
     """
 
     registry_path = tmp_path / "registro.json"
     client = create_app(election, registry_path=registry_path).test_client()
+
+    # Si comincia da «Prepara»: le pagine del voto rimandano lì finché
+    # la simulazione non è stata confermata.
+    for page in ("/cabina", "/bacheca", "/spoglio", "/verifica"):
+        assert client.get(page).headers["Location"].endswith("/prepara")
+
+    response = client.post("/prepara", data={"azione": "usa"})
+
+    assert response.headers["Location"].endswith("/cabina")
 
     for page in ("/", "/prepara", "/cabina", "/bacheca", "/spoglio", "/verifica"):
         assert client.get(page).status_code == 200

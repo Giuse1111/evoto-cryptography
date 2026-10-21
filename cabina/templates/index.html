@@ -39,6 +39,8 @@
     <p class="status-line">
       {% if preparing %}
         <span class="dot dot-busy"></span> Nuova simulazione in preparazione: {{ status.done }} elettori su {{ status.total }}.
+      {% elif unconfirmed %}
+        <span class="dot dot-busy"></span> Simulazione pronta: per iniziare sceglila nella pagina «Prepara».
       {% elif not ready %}
         <span class="dot dot-idle"></span> Nessuna simulazione pronta.
       {% elif closed %}
@@ -91,15 +93,16 @@
 <section aria-labelledby="come-si-usa">
   <h2 id="come-si-usa" class="section-title">Come si usa</h2>
   <p class="section-lead">
-    Il menu in alto segue questi cinque passi. All'avvio una simulazione è già pronta:
-    puoi cominciare direttamente dal voto.
+    Il menu in alto segue questi cinque passi, nell'ordine. Si comincia da «Prepara»: puoi usare
+    con un clic la simulazione già pronta all'avvio, oppure sceglierne una tu.
   </p>
   <ol class="howto">
     <li>
       <h3>Prepara</h3>
       <p>
         Scegli quanti elettori simulati votano e come: una coalizione in testa, un testa a testa,
-        tutte le liste alla pari. Puoi anche cambiare il numero di garanti.
+        tutte le liste alla pari. Puoi anche cambiare il numero di garanti, oppure tenere la
+        simulazione già pronta.
       </p>
     </li>
     <li>

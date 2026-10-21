@@ -90,14 +90,22 @@ class NavStep:
 def navigation(host: DemoHost) -> tuple[NavStep, ...]:
     """
     Menu a passi: Prepara, Vota, Bacheca, Spoglio e risultati, Verifica.
+
+    Si comincia sempre da «Prepara»: finché la simulazione non è stata
+    scelta lì (preparata o confermata), gli altri passi sono bloccati.
     """
 
     session = host.session
-    ready = session is not None and not host.preparing
+    available = session is not None and not host.preparing
+    ready = available and host.confirmed
     closed = ready and session.phase == CLOSED
     voted = closed or (ready and session.counts()["demo_voted"] > 0)
     verified = closed and session.clean_verification is not None
-    waiting = "Disponibile quando la simulazione è pronta"
+    waiting = (
+        "Prima scegli la simulazione nella pagina Prepara"
+        if available
+        else "Disponibile quando la simulazione è pronta"
+    )
 
     return (
         NavStep(
@@ -160,9 +168,12 @@ def next_step(host: DemoHost) -> tuple[str, str]:
     if session is None:
         return "Prepara una simulazione", "prepare"
 
+    if not host.confirmed:
+        return "Inizia: prepara la simulazione", "prepare"
+
     if session.phase != CLOSED:
         if session.counts()["demo_voted"] == 0:
-            return "Inizia: vai a votare", "access"
+            return "Vai a votare", "access"
 
         return "Chiudi il voto e fai lo spoglio", "closing"
 
@@ -251,7 +262,8 @@ def create_app(
         # La sessione si legge una volta per richiesta: se intanto una
         # nuova simulazione la sostituisce, la pagina resta coerente.
         g.session = host.session
-        g.ready = g.session is not None and not host.preparing
+        g.available = g.session is not None and not host.preparing
+        g.ready = g.available and host.confirmed
 
         if request.endpoint in ALWAYS_OPEN or request.endpoint is None:
             return None
@@ -265,6 +277,7 @@ def create_app(
     def common_values() -> dict[str, object]:
         session = g.get("session")
         ready = g.get("ready", False)
+        available = g.get("available", False)
 
         def code(value: int, short: bool = False) -> str:
             return format_code(value, session.params, short=short)
@@ -275,6 +288,8 @@ def create_app(
             "config": host.config,
             "mode": host.mode,
             "ready": ready,
+            "available": available,
+            "unconfirmed": available and not ready,
             "preparing": host.preparing,
             "closed": ready and session.phase == CLOSED,
             "steps": navigation(host),
@@ -297,7 +312,7 @@ def create_app(
         return render_template(
             "index.html",
             active="home",
-            counts=g.session.counts() if g.ready else None,
+            counts=g.session.counts() if g.available else None,
             next_step=next_step(host),
             status=host.status,
         )
@@ -307,7 +322,15 @@ def create_app(
         error = None
         values = settings_to_form(host.form_defaults())
 
-        if request.method == "POST":
+        if request.method == "POST" and request.form.get("azione") == "usa":
+            # La simulazione già pronta va bene così: si passa al voto.
+            try:
+                host.confirm()
+            except ValueError as exception:
+                error = str(exception)
+            else:
+                return redirect(url_for("access"))
+        elif request.method == "POST":
             values.update(request.form.to_dict())
 
             try:
@@ -363,7 +386,7 @@ def create_app(
             max_blank=MAX_BLANK_PERCENT,
             max_spoil=MAX_SPOIL_PERCENT,
             speeds={key: host.seconds_per_ballot(key) for key in MODES},
-            counts=g.session.counts() if g.ready else None,
+            counts=g.session.counts() if g.available else None,
         )
 
     @app.get("/stato")
