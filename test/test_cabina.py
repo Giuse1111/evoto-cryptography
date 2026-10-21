@@ -6,6 +6,7 @@ la seconda percorre le pagine con il client di test di Flask, come
 farebbe un elettore nel browser. Si usa il gruppo didattico.
 """
 
+from dataclasses import replace
 import json
 from pathlib import Path
 import re
@@ -23,6 +24,7 @@ from cabina.sessione import (
     demo_codes,
     explain_violation,
     format_code,
+    normalize_card,
     normalize_code,
     symbol_of,
 )
@@ -46,6 +48,12 @@ CONFIG = load_election_config(
     / "elezione_esempio.json"
 )
 
+# Carte d'identità fittizie della configurazione di esempio, per
+# circoscrizione: NORD[0] è la prima carta della circoscrizione Nord.
+CARDS = demo_codes(CONFIG, 10)
+NORD = [code for code, district in CARDS.items() if district == 0]
+SUD = [code for code, district in CARDS.items() if district == 2]
+
 
 @pytest.fixture
 def election() -> ElectionSession:
@@ -67,15 +75,19 @@ def election() -> ElectionSession:
 
 def test_demo_codes_per_district():
     """
-    Dieci codici per circoscrizione, con il nome della circoscrizione.
+    Dieci carte d'identità fittizie per circoscrizione, nel formato
+    della carta d'identità elettronica (due lettere, cinque cifre, due
+    lettere): tutte diverse, sempre le stesse per la stessa elezione e
+    diverse per un'altra elezione.
     """
 
-    codes = demo_codes(CONFIG, 10)
+    assert len(CARDS) == 30
+    assert sorted(CARDS.values()) == [0] * 10 + [1] * 10 + [2] * 10
+    assert all(re.fullmatch(r"[A-Z]{2}[0-9]{5}[A-Z]{2}", code) for code in CARDS)
+    assert not any(letter in code for code in CARDS for letter in "IOQ")
 
-    assert len(codes) == 30
-    assert codes["NORD-01"] == 0
-    assert codes["CENTRO-10"] == 1
-    assert codes["SUD-05"] == 2
+    assert demo_codes(CONFIG, 10) == CARDS
+    assert set(demo_codes(replace(CONFIG, election_id=2), 10)).isdisjoint(CARDS)
 
 
 def test_formatting_helpers():
@@ -97,11 +109,13 @@ def test_formatting_helpers():
     assert normalize_code("ab12-cd 34") == "AB12CD34"
     assert symbol_of("Lista A") == "A"
 
+    assert normalize_card(" ca-12345 ab ") == "CA12345AB"
+
 
 def test_prefill_casts_one_ballot_per_simulated_voter(election):
     """
     Ogni elettore simulato deposita una scheda; la catena è valida e
-    i codici dimostrativi sono ancora tutti disponibili.
+    le carte d'identità fittizie sono ancora tutte disponibili.
     """
 
     counts = election.counts()
@@ -147,7 +161,7 @@ def test_cast_gives_a_tracking_code(election):
     prime cifre. Non si può votare due volte.
     """
 
-    pending = election.prepare("NORD-01", VoterChoice(list_index=1, preferences=(4, 5)))
+    pending = election.prepare(NORD[0], VoterChoice(list_index=1, preferences=(4, 5)))
     entry = election.cast(pending.token)
 
     assert entry.state == CAST
@@ -165,7 +179,7 @@ def test_cast_gives_a_tracking_code(election):
     assert len(election.board.entries) == entry.sequence
 
     with pytest.raises(ValueError):
-        election.prepare("NORD-01", VoterChoice(list_index=0))
+        election.prepare(NORD[0], VoterChoice(list_index=0))
 
     with pytest.raises(ValueError):
         election.receipt("sconosciuto")
@@ -178,11 +192,11 @@ def test_spoil_reveals_the_choice_and_allows_a_new_vote(election):
     """
 
     choice = VoterChoice(list_index=1, preferences=(4, 5))
-    token = election.prepare("NORD-02", choice).token
+    token = election.prepare(NORD[1], choice).token
     report = election.spoil(token)
 
     assert report.entry.state == SPOILED
-    assert report.voter_id == "NORD-02"
+    assert report.voter_id == NORD[1]
     assert report.matches_choice
     assert report.reencrypts
     assert report.decoded == "Lista B; preferenze: Bruno E., Costa D."
@@ -191,7 +205,7 @@ def test_spoil_reveals_the_choice_and_allows_a_new_vote(election):
     assert election.spoil(token) == report
     assert election.spoil_report(token) == report
 
-    entry = election.cast(election.prepare("NORD-02", choice).token)
+    entry = election.cast(election.prepare(NORD[1], choice).token)
 
     assert entry.sequence == report.entry.sequence + 1
     assert election.board_is_valid()
@@ -203,10 +217,10 @@ def test_spoil_after_voting_is_rejected(election):
     l'elettore ha già depositato un'altra scheda.
     """
 
-    old = election.prepare("NORD-03", VoterChoice(list_index=0))
-    election.cast(election.prepare("NORD-03", VoterChoice(list_index=0)).token)
+    old = election.prepare(NORD[2], VoterChoice(list_index=0))
+    election.cast(election.prepare(NORD[2], VoterChoice(list_index=0)).token)
 
-    with pytest.raises(ValueError, match="ha già votato"):
+    with pytest.raises(ValueError, match="si è già votato"):
         election.spoil(old.token)
 
 
@@ -224,7 +238,7 @@ def test_invalid_choice_cannot_be_proved(election):
 
     for choice, rule in cases:
         with pytest.raises(ValueError, match=rule):
-            election.prepare("NORD-03", choice)
+            election.prepare(NORD[2], choice)
 
     assert election.counts()["demo_voted"] == 0
 
@@ -283,7 +297,7 @@ def test_close_requires_the_quorum(election):
     assert sum(election.scrutiny.list_seats) == CONFIG.seats
 
     with pytest.raises(ValueError):
-        election.prepare("NORD-04", VoterChoice(list_index=0))
+        election.prepare(NORD[3], VoterChoice(list_index=0))
 
 
 def test_registry_is_verified_and_tampering_is_detected(election):
@@ -292,7 +306,7 @@ def test_registry_is_verified_and_tampering_is_detected(election):
     dimostrativa fa fallire i controlli attesi.
     """
 
-    election.cast(election.prepare("SUD-01", VoterChoice(list_index=4)).token)
+    election.cast(election.prepare(SUD[0], VoterChoice(list_index=4)).token)
     election.close((1, 3, 5))
 
     clean = election.verify()
@@ -382,19 +396,37 @@ def test_web_flow(election, tmp_path):
     # I risultati ora sono nella pagina dello spoglio.
     assert client.get("/risultati").headers["Location"].endswith("/spoglio")
 
-    response = client.post("/cabina", data={"codice": "nord-05"})
+    # Il numero della carta si può scrivere minuscolo, con spazi o trattini.
+    card = NORD[4]
+    typed = f"{card[:2].lower()} {card[2:7]} {card[7:].lower()}"
+    response = client.post("/cabina", data={"codice": typed})
 
     assert response.status_code == 302
-    assert response.headers["Location"].endswith("/cabina/NORD-05")
+    assert response.headers["Location"].endswith(f"/cabina/{card}")
 
-    page = client.get("/cabina/NORD-05").get_data(as_text=True)
+    dashed = f"{card[:2]}-{card[2:7]}-{card[7:]}".lower()
+
+    assert client.get(f"/cabina/{dashed}").headers["Location"].endswith(f"/cabina/{card}")
+
+    page = client.post("/cabina", data={"codice": "ZZ00000ZZ"}).get_data(as_text=True)
+
+    assert "ZZ00000ZZ non è tra quelle degli aventi diritto" in page
+
+    page = client.get(f"/cabina/{card}").get_data(as_text=True)
 
     assert "Rinaldi C." in page and "Bruno E." in page
+    assert f"Carta d'identità n. <strong>{card}</strong>" in page
 
     page = client.post(
-        "/cabina/NORD-05",
+        f"/cabina/{card}",
         data={"lista": "1", "preferenze": ["4"]},
     ).get_data(as_text=True)
+
+    # La pagina di conferma non mette in evidenza l'impronta: è solo
+    # nei dettagli tecnici, perché per ritrovare il voto serve il codice
+    # di tracciamento.
+    assert "code-big" not in page
+    assert "Dettagli tecnici della scheda" in page
 
     token = re.search(r"/scheda/([^/]+)/sfida", page).group(1)
     response = client.post(f"/scheda/{token}/sfida")
@@ -404,10 +436,10 @@ def test_web_flow(election, tmp_path):
     page = client.get(f"/sfida/{token}").get_data(as_text=True)
 
     assert "Lista B; preferenze: Bruno E." in page
-    assert "Vota di nuovo come NORD-05" in page
+    assert f'href="/cabina/{card}">Vota di nuovo</a>' in page
 
     page = client.post(
-        "/cabina/NORD-05",
+        f"/cabina/{card}",
         data={"lista": "1", "preferenze": ["4"]},
     ).get_data(as_text=True)
 
@@ -442,7 +474,7 @@ def test_web_flow(election, tmp_path):
     assert "Scrivi almeno 3 cifre del codice" in page
 
     page = client.post(
-        "/cabina/NORD-06",
+        f"/cabina/{NORD[5]}",
         data={"lista": "1", "preferenze": ["0"], "scorretto": "1"},
     ).get_data(as_text=True)
 
@@ -496,7 +528,7 @@ def test_web_flow(election, tmp_path):
         client.get("/registro.json").get_data(as_text=True)
     )
 
-    assert client.get("/cabina/NORD-07").status_code == 400
+    assert client.get(f"/cabina/{NORD[6]}").status_code == 400
 
 
 def test_demo_group_end_to_end():

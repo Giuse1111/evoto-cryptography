@@ -58,7 +58,6 @@ h3 { font-size: 1.05rem; margin: 0 0 6px; }
   display: inline-flex; align-items: center; gap: 9px;
   color: #fff; font-weight: 700; font-size: 1.2rem; text-decoration: none;
 }
-.brand-sub { font-weight: 400; font-size: 0.85rem; color: #b8c4d1; }
 
 .badge { font-size: 0.82rem; padding: 3px 11px; border-radius: 999px; white-space: nowrap; }
 .badge-open { background: var(--ok-soft); color: var(--ok); }
@@ -404,7 +403,6 @@ th { font-size: 0.84rem; color: var(--muted); font-weight: 600; background: #f8f
 @media (max-width: 860px) {
   .hero, .prepare-layout { grid-template-columns: 1fr; }
   .hero { padding: 22px; }
-  .brand-sub { display: none; }
 }
 
 /* Schermi stretti: il menu diventa una riga di numeri con le etichette sotto. */

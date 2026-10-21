@@ -381,7 +381,8 @@ def test_navigation_follows_the_election():
     }
     assert next_step(host)[1] == "access"
 
-    session.cast(session.prepare("NORD-01", VoterChoice(list_index=0)).token)
+    card = next(iter(session.demo_voters))
+    session.cast(session.prepare(card, VoterChoice(list_index=0)).token)
 
     assert states()["vota"] == "fatto"
     assert next_step(host)[1] == "closing"
@@ -432,7 +433,9 @@ def test_startup_simulation_must_be_chosen_in_prepare():
     assert 'href="/prepara">Inizia: prepara la simulazione' in page
     assert "Si comincia da Prepara" in page
 
-    for path in ("/cabina", "/cabina/NORD-01", "/bacheca", "/spoglio"):
+    card = next(iter(session.demo_voters))
+
+    for path in ("/cabina", f"/cabina/{card}", "/bacheca", "/spoglio"):
         assert client.get(path).headers["Location"].endswith("/prepara")
 
     page = client.get("/prepara").get_data(as_text=True)

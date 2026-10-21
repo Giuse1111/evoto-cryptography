@@ -27,7 +27,7 @@
 
 {% macro voting_steps(current) -%}
 {%- set keys = ["elettore", "scheda", "conferma", "ricevuta"] -%}
-{%- set labels = ["Elettore", "Scheda", "Conferma", "Ricevuta"] -%}
+{%- set labels = ["Accesso", "Scheda", "Conferma", "Ricevuta"] -%}
 {%- set position = keys.index(current) -%}
 <ol class="substeps" aria-label="Passi del voto">
   {% for key in keys %}

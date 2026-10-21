@@ -56,6 +56,7 @@ from cabina.sessione import (
     TAMPERINGS,
     ElectionSession,
     format_code,
+    normalize_card,
     normalize_code,
 )
 from evoto.configurazione import coalition_of
@@ -122,7 +123,7 @@ def navigation(host: DemoHost) -> tuple[NavStep, ...]:
             endpoint="access",
             done=voted,
             locked=not ready,
-            hint="Vota con un codice elettore" if ready else waiting,
+            hint="Accedi con un documento fittizio e vota" if ready else waiting,
         ),
         NavStep(
             key="bacheca",
@@ -411,7 +412,7 @@ def create_app(
         typed = ""
 
         if request.method == "POST":
-            typed = request.form.get("codice", "").strip().upper()
+            typed = normalize_card(request.form.get("codice", ""))
 
             try:
                 session.voter_district(typed)
@@ -436,9 +437,9 @@ def create_app(
     @app.route("/cabina/<voter_id>", methods=["GET", "POST"])
     def ballot(voter_id: str):
         session = g.session
-        normalized = voter_id.strip().upper()
+        normalized = normalize_card(voter_id)
 
-        if request.method == "GET" and normalized != voter_id:
+        if request.method == "GET" and normalized and normalized != voter_id:
             return redirect(url_for("ballot", voter_id=normalized))
 
         try:

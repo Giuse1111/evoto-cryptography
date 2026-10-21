@@ -6,8 +6,8 @@ demo, che l'applicazione web si limita a mostrare.
 
 - all'avvio: cerimonia delle chiavi con i garanti simulati ed elettori
   simulati che votano a caso, così la bacheca non parte vuota;
-- durante il voto: codici dimostrativi per votare dal browser, scheda
-  cifrata con le prove R1-R5, deposito oppure sfida di Benaloh;
+- durante il voto: carte d'identità fittizie per votare dal browser,
+  scheda cifrata con le prove R1-R5, deposito oppure sfida di Benaloh;
 - alla chiusura: conteggio omomorfico e decifratura a soglia con i
   garanti presenti scelti nella pagina, poi lo scrutinio;
 - alla fine: registro pubblico JSON, verificatore indipendente e
@@ -76,8 +76,12 @@ from verifica.verifica import verify_public_registry
 # la Coalizione Alfa ha circa il 46% dei voti e prende il premio.
 EXAMPLE_WEIGHTS = (22, 14, 12, 9, 16, 11, 7, 6)
 
-# Codici dimostrativi per votare dal browser in ogni circoscrizione.
+# Carte d'identità fittizie per votare dal browser in ogni circoscrizione.
 DEMO_CODES_PER_DISTRICT = 10
+
+# Lettere dei numeri di carta d'identità fittizi: senza I, O e Q, che si
+# confondono con 1 e 0.
+CARD_LETTERS = "ABCDEFGHJKLMNPRSTUVWXYZ"
 
 # Probabilità che un elettore simulato sprechi una scheda per
 # controllare il dispositivo, come nella simulazione di E1.
@@ -261,30 +265,48 @@ def normalize_code(text: str) -> str:
 
 def demo_codes(config: ElectionConfig, per_district: int) -> dict[str, int]:
     """
-    Codici dimostrativi degli elettori che votano dal browser.
+    Numeri delle carte d'identità fittizie degli elettori che votano dal
+    browser, con la loro circoscrizione.
 
-    Il codice è formato dal nome della circoscrizione e da un numero:
-    NORD-01, CENTRO-01, ... In un sistema reale l'elettore sarebbe
-    identificato con SPID o CIE; qui la lista degli aventi diritto è
+    I numeri hanno il formato della carta d'identità elettronica: due
+    lettere, cinque cifre, due lettere (per esempio CA12345AB). Sono
+    tutti diversi e sempre gli stessi per la stessa elezione, perché
+    dipendono solo da election_id; sono inventati e non corrispondono a
+    documenti reali. In un sistema reale l'elettore accederebbe con SPID
+    o con la CIE e il suo PIN; qui la lista degli aventi diritto è
     simulata.
     """
 
+    rng = random.Random(f"carte-{config.election_id}")
     codes: dict[str, int] = {}
 
-    for district_index, district in enumerate(config.districts):
-        prefix = "".join(
-            character
-            for character in district.name.upper()
-            if character.isalnum()
-        )[:8] or f"C{district_index + 1}"
+    def letters() -> str:
+        return "".join(rng.choice(CARD_LETTERS) for _ in range(2))
 
-        if any(code.startswith(prefix + "-") for code in codes):
-            prefix = f"{prefix}{district_index + 1}"
+    for district_index in range(len(config.districts)):
+        added = 0
 
-        for number in range(1, per_district + 1):
-            codes[f"{prefix}-{number:02d}"] = district_index
+        while added < per_district:
+            code = f"{letters()}{rng.randrange(100000):05d}{letters()}"
+
+            if code not in codes:
+                codes[code] = district_index
+                added += 1
 
     return codes
+
+
+def normalize_card(text: str) -> str:
+    """
+    Numero di carta d'identità scritto o copiato dall'elettore: lettere
+    maiuscole e cifre, senza spazi né trattini.
+    """
+
+    return "".join(
+        character
+        for character in text.upper()
+        if character.isascii() and character.isalnum()
+    )
 
 
 def explain_violation(
@@ -611,7 +633,7 @@ class ElectionSession:
 
     def available_demo_codes(self) -> dict[str, int]:
         """
-        Codici dimostrativi che non hanno ancora votato.
+        Carte d'identità fittizie con cui non si è ancora votato.
         """
 
         with self._lock:
@@ -625,18 +647,26 @@ class ElectionSession:
         """
         Circoscrizione di un elettore che può ancora votare.
 
-        Solleva ValueError se il codice non esiste, se l'elettore ha
-        già votato o se l'elezione è chiusa.
+        Solleva ValueError se la carta d'identità non è tra gli aventi
+        diritto, se l'elettore ha già votato o se l'elezione è chiusa.
         """
 
         with self._lock:
             self._require_voting()
 
+            if not voter_id:
+                raise ValueError("Scrivi il numero della carta d'identità.")
+
             if voter_id not in self.roll.voter_districts:
-                raise ValueError(f"Il codice {voter_id} non è tra gli aventi diritto.")
+                raise ValueError(
+                    f"La carta d'identità {voter_id} non è tra quelle degli "
+                    "aventi diritto."
+                )
 
             if voter_id in self.roll.voted:
-                raise ValueError(f"L'elettore {voter_id} ha già votato.")
+                raise ValueError(
+                    f"Con la carta d'identità {voter_id} si è già votato."
+                )
 
             return self.roll.voter_districts[voter_id]
 
@@ -848,7 +878,10 @@ class ElectionSession:
             pending = self.pending(token)
 
             if pending.voter_id in self.roll.voted:
-                raise ValueError(f"L'elettore {pending.voter_id} ha già votato.")
+                raise ValueError(
+                    f"Con la carta d'identità {pending.voter_id} si è già "
+                    "votato."
+                )
 
             prepared = pending.prepared
             witness: BallotWitness = prepared.witness
@@ -1078,8 +1111,8 @@ class ElectionSession:
 
     def counts(self) -> dict[str, int]:
         """
-        Numeri della bacheca: schede depositate e sprecate, elettori
-        dimostrativi che hanno già votato.
+        Numeri della bacheca: schede depositate e sprecate, carte
+        d'identità fittizie con cui si è già votato dal browser.
         """
 
         with self._lock:

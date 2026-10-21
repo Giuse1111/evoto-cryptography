@@ -7,7 +7,7 @@
 
 <section class="hero">
   <div class="hero-text">
-    <p class="kicker">Demo di voto elettronico verificabile</p>
+    <p class="kicker">Demo di voto elettronico</p>
     <h1>Vota, ritrova la tua scheda e controlla il risultato</h1>
     <p class="lead">
       eVoto simula un'elezione online dall'inizio alla fine. Voti come un elettore, segui lo
@@ -46,7 +46,7 @@
       {% elif closed %}
         <span class="dot dot-closed"></span> Voto chiuso: i risultati sono pronti.
       {% else %}
-        <span class="dot dot-open"></span> Voto aperto: puoi votare con i codici dimostrativi.
+        <span class="dot dot-open"></span> Voto aperto: puoi votare con le carte d'identità fittizie.
       {% endif %}
     </p>
   </aside>
@@ -108,7 +108,7 @@
     <li>
       <h3>Vota</h3>
       <p>
-        Scegli un codice elettore e compila la scheda: una lista e, se vuoi, fino a
+        Accedi con una carta d'identità fittizia e compila la scheda: una lista e, se vuoi, fino a
         {{ rules.max_preferences }} preferenze per candidati della stessa lista. Prima di depositarla
         puoi sfidare il dispositivo per controllare che abbia registrato davvero la tua scelta.
       </p>

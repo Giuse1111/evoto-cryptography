@@ -10,39 +10,47 @@
   {{ voting_steps("elettore") }}
 
   <p class="lead">
-    Scegli un elettore: in un sistema vero ti identificheresti con SPID o CIE, qui gli aventi
-    diritto sono simulati. Ogni codice vota una sola volta e riceve la scheda della sua
-    circoscrizione.
+    Per votare online accedi con SPID o con la carta d'identità elettronica. Qui scegli una delle
+    carte d'identità fittizie degli aventi diritto simulati, oppure scrivi il suo numero: ogni
+    elettore appartiene a una circoscrizione e può votare una sola volta.
   </p>
 
   {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
 
   <div class="card">
-    <h2>Codici disponibili</h2>
+    <h2>Carte d'identità disponibili</h2>
     {% for district_index, voter_ids in codes | dictsort %}
       <div class="code-group">
         <span class="code-group-name">{{ config.districts[district_index].name }}</span>
         <span class="chips">
           {% for voter_id in voter_ids %}
-            <a class="chip" href="{{ url_for('ballot', voter_id=voter_id) }}">{{ voter_id }}</a>
+            <a class="chip mono" href="{{ url_for('ballot', voter_id=voter_id) }}">{{ voter_id }}</a>
           {% endfor %}
         </span>
       </div>
     {% else %}
-      <p>Tutti i codici dimostrativi hanno già votato. Per votare ancora prepara una nuova simulazione.</p>
+      <p>Con tutte le carte d'identità fittizie si è già votato. Per votare ancora prepara una nuova simulazione.</p>
     {% endfor %}
 
     {% if codes %}
+      {% set example = (codes | dictsort | first)[1][0] %}
       <form method="post" class="inline-form">
-        <label for="codice">Oppure scrivi il codice</label>
-        <input id="codice" name="codice" value="{{ typed }}" placeholder="NORD-01" autocomplete="off" required>
+        <label for="codice">Oppure scrivi il numero della carta d'identità</label>
+        <input id="codice" name="codice" value="{{ typed }}" placeholder="per esempio {{ example }}"
+               autocapitalize="characters" autocomplete="off" spellcheck="false" required>
         <button type="submit">Entra</button>
       </form>
     {% endif %}
   </div>
 
   <details class="advanced">
-    <summary>Nota tecnica: dove viene cifrata la scheda</summary>
+    <summary>Nota tecnica: accesso e dispositivo di voto</summary>
+    <p>
+      I numeri sono inventati nel formato della carta d'identità elettronica (due lettere, cinque
+      cifre, due lettere) e sono sempre gli stessi per la stessa elezione: non corrispondono a
+      documenti reali. In un sistema reale il numero da solo non basterebbe: l'accesso avverrebbe
+      con SPID oppure con la carta d'identità elettronica e il suo PIN.
+    </p>
     <p>
       In questa demo lo stesso programma fa sia da dispositivo di voto sia da bacheca: la scelta
       arriva al programma, che la cifra e costruisce le prove. In un sistema reale la cifratura
