@@ -22,12 +22,12 @@ from evoto.scheda import (
     BallotWitness,
     EncryptedBallot,
     PreferenceMetadata,
-    _group_preference_indices_by_gender,
     _prove_ballot_r1_r2,
     _prove_ballot_r3,
     _prove_ballot_r4,
     _prove_ballot_r5,
     _validate_ballot_alignment,
+    gender_groups,
     prove_ballot,
     prove_r1,
     prove_r2,
@@ -64,7 +64,6 @@ def _build_valid_ballot_case():
             PreferenceMetadata(list_index=1, gender="M"),
         ),
         max_preferences=3,
-        max_preferences_per_gender=2,
     )
 
     ballot = EncryptedBallot(
@@ -527,83 +526,110 @@ def test_r4_accepts_zero_derived_nonce():
     )
 
 
+def _encrypt_group(plaintexts, nonces):
+    """
+    Cifra una sequenza di caselle di preferenza con nonce fissati.
+    """
+
+    return tuple(
+        encrypt(
+            value,
+            PUBLIC_KEY,
+            TEST_PARAMS,
+            nonce=nonce,
+        )
+        for value, nonce in zip(
+            plaintexts,
+            nonces,
+        )
+    )
+
+
 @pytest.mark.parametrize(
-    "gender_plaintexts",
+    ("first_plaintexts", "second_plaintexts"),
     [
-        (0, 0, 0),
-        (1, 0, 0),
-        (1, 1, 0),
+        ((0, 0, 0), (0, 0, 0)),
+        ((1, 0, 0), (0, 0, 0)),
+        ((0, 0, 0), (0, 1, 0)),
+        ((1, 0, 0), (0, 1, 0)),
+        ((1, 1, 0), (0, 0, 1)),
+        ((0, 0, 1), (1, 1, 0)),
     ],
 )
-def test_r5_accepts_up_to_two_preferences_same_gender(
-    gender_plaintexts,
+def test_r5_accepts_preferences_of_different_genders(
+    first_plaintexts,
+    second_plaintexts,
 ):
     """
-    R5 accetta da zero a due preferenze dello stesso genere.
+    R5 accetta nessuna preferenza, una preferenza sola e più
+    preferenze che riguardano entrambi i generi: le preferenze dei due
+    generi differiscono al più di 1.
     """
 
-    gender_nonces = (10, 20, 30)
+    first_nonces = (10, 20, 30)
+    second_nonces = (40, 50, 60)
 
-    gender_ciphertexts = tuple(
-        encrypt(
-            value,
-            PUBLIC_KEY,
-            TEST_PARAMS,
-            nonce=nonce,
-        )
-        for value, nonce in zip(
-            gender_plaintexts,
-            gender_nonces,
-        )
-    )
+    first = _encrypt_group(first_plaintexts, first_nonces)
+    second = _encrypt_group(second_plaintexts, second_nonces)
 
     proof = prove_r5(
-        gender_ciphertexts=gender_ciphertexts,
-        gender_plaintexts=gender_plaintexts,
-        gender_nonces=gender_nonces,
-        max_preferences_per_gender=2,
+        first_ciphertexts=first,
+        first_plaintexts=first_plaintexts,
+        first_nonces=first_nonces,
+        second_ciphertexts=second,
+        second_plaintexts=second_plaintexts,
+        second_nonces=second_nonces,
         public_key=PUBLIC_KEY,
         params=TEST_PARAMS,
         context=CONTEXT,
     )
+
+    assert len(proof.branches) == 3
 
     assert verify_r5(
-        gender_ciphertexts=gender_ciphertexts,
+        first_ciphertexts=first,
+        second_ciphertexts=second,
         proof=proof,
-        max_preferences_per_gender=2,
         public_key=PUBLIC_KEY,
         params=TEST_PARAMS,
         context=CONTEXT,
     )
 
 
-def test_r5_rejects_three_preferences_same_gender():
+@pytest.mark.parametrize(
+    ("first_plaintexts", "second_plaintexts"),
+    [
+        ((1, 1, 0), (0, 0, 0)),
+        ((0, 0, 0), (1, 1, 0)),
+        ((1, 1, 1), (0, 0, 0)),
+    ],
+)
+def test_r5_rejects_preferences_all_of_the_same_gender(
+    first_plaintexts,
+    second_plaintexts,
+):
     """
-    R5 rifiuta tre preferenze appartenenti allo stesso genere.
+    R5 rifiuta due o tre preferenze tutte dello stesso genere, che la
+    legge non ammette: il cifrato derivato contiene -1, 3 oppure 4.
     """
 
-    gender_plaintexts = (1, 1, 1)
-    gender_nonces = (10, 20, 30)
-
-    gender_ciphertexts = tuple(
-        encrypt(
-            value,
-            PUBLIC_KEY,
-            TEST_PARAMS,
-            nonce=nonce,
-        )
-        for value, nonce in zip(
-            gender_plaintexts,
-            gender_nonces,
-        )
-    )
+    first_nonces = (10, 20, 30)
+    second_nonces = (40, 50, 60)
 
     with pytest.raises(ValueError):
         prove_r5(
-            gender_ciphertexts=gender_ciphertexts,
-            gender_plaintexts=gender_plaintexts,
-            gender_nonces=gender_nonces,
-            max_preferences_per_gender=2,
+            first_ciphertexts=_encrypt_group(
+                first_plaintexts,
+                first_nonces,
+            ),
+            first_plaintexts=first_plaintexts,
+            first_nonces=first_nonces,
+            second_ciphertexts=_encrypt_group(
+                second_plaintexts,
+                second_nonces,
+            ),
+            second_plaintexts=second_plaintexts,
+            second_nonces=second_nonces,
             public_key=PUBLIC_KEY,
             params=TEST_PARAMS,
             context=CONTEXT,
@@ -612,41 +638,70 @@ def test_r5_rejects_three_preferences_same_gender():
 
 def test_r5_accepts_zero_derived_nonce():
     """
-    R5 accetta una randomness aggregata uguale a 0 modulo q.
+    R5 accetta un nonce derivato uguale a 0 modulo q: succede quando i
+    nonce dei due generi hanno la stessa somma.
     """
 
-    gender_plaintexts = (1, 1)
-    gender_nonces = (600, 689)
+    first_plaintexts = (1,)
+    second_plaintexts = (1,)
+    first_nonces = (600,)
+    second_nonces = (600,)
 
-    assert sum(gender_nonces) % TEST_PARAMS.q == 0
-
-    gender_ciphertexts = tuple(
-        encrypt(
-            value,
-            PUBLIC_KEY,
-            TEST_PARAMS,
-            nonce=nonce,
-        )
-        for value, nonce in zip(
-            gender_plaintexts,
-            gender_nonces,
-        )
-    )
+    first = _encrypt_group(first_plaintexts, first_nonces)
+    second = _encrypt_group(second_plaintexts, second_nonces)
 
     proof = prove_r5(
-        gender_ciphertexts=gender_ciphertexts,
-        gender_plaintexts=gender_plaintexts,
-        gender_nonces=gender_nonces,
-        max_preferences_per_gender=2,
+        first_ciphertexts=first,
+        first_plaintexts=first_plaintexts,
+        first_nonces=first_nonces,
+        second_ciphertexts=second,
+        second_plaintexts=second_plaintexts,
+        second_nonces=second_nonces,
         public_key=PUBLIC_KEY,
         params=TEST_PARAMS,
         context=CONTEXT,
     )
 
     assert verify_r5(
-        gender_ciphertexts=gender_ciphertexts,
+        first_ciphertexts=first,
+        second_ciphertexts=second,
         proof=proof,
-        max_preferences_per_gender=2,
+        public_key=PUBLIC_KEY,
+        params=TEST_PARAMS,
+        context=CONTEXT,
+    )
+
+
+def test_r5_depends_on_the_order_of_the_genders():
+    """
+    Il cifrato derivato è (primo genere) - (secondo genere) + 1: con i
+    gruppi scambiati è un altro cifrato e la stessa prova non vale.
+    """
+
+    first_plaintexts = (1, 1)
+    second_plaintexts = (1, 0)
+    first_nonces = (10, 20)
+    second_nonces = (30, 40)
+
+    first = _encrypt_group(first_plaintexts, first_nonces)
+    second = _encrypt_group(second_plaintexts, second_nonces)
+
+    proof = prove_r5(
+        first_ciphertexts=first,
+        first_plaintexts=first_plaintexts,
+        first_nonces=first_nonces,
+        second_ciphertexts=second,
+        second_plaintexts=second_plaintexts,
+        second_nonces=second_nonces,
+        public_key=PUBLIC_KEY,
+        params=TEST_PARAMS,
+        context=CONTEXT,
+    )
+
+    assert not verify_r5(
+        first_ciphertexts=second,
+        second_ciphertexts=first,
+        proof=proof,
         public_key=PUBLIC_KEY,
         params=TEST_PARAMS,
         context=CONTEXT,
@@ -715,14 +770,14 @@ def test_ballot_proofs_groups_all_rules():
         r2_proof=proof,
         r3_proofs=(proof,),
         r4_proof=proof,
-        r5_proofs=(proof, proof),
+        r5_proof=proof,
     )
 
     assert proofs.r1_proofs == (proof,)
     assert proofs.r2_proof == proof
     assert proofs.r3_proofs == (proof,)
     assert proofs.r4_proof == proof
-    assert proofs.r5_proofs == (proof, proof)
+    assert proofs.r5_proof == proof
 
 
 def test_preference_metadata_stores_list_and_gender():
@@ -753,7 +808,6 @@ def test_ballot_layout_stores_official_preference_metadata():
         list_count=2,
         preference_metadata=metadata,
         max_preferences=3,
-        max_preferences_per_gender=2,
     )
 
     assert layout.list_count == 2
@@ -770,7 +824,6 @@ def test_ballot_layout_rejects_invalid_list_index():
         BallotLayout(
             list_count=1,
             max_preferences=3,
-            max_preferences_per_gender=2,
             preference_metadata=(
                 PreferenceMetadata(
                     list_index=1,
@@ -828,7 +881,6 @@ def test_layout_ballot_and_witness_must_match():
     layout = BallotLayout(
         list_count=1,
         max_preferences=3,
-        max_preferences_per_gender=2,
         preference_metadata=(
             PreferenceMetadata(
                 list_index=0,
@@ -877,7 +929,6 @@ def test_prove_ballot_r1_r2_generates_valid_proofs():
     layout = BallotLayout(
         list_count=2,
         max_preferences=3,
-        max_preferences_per_gender=2,
         preference_metadata=(
             PreferenceMetadata(list_index=0, gender="F"),
             PreferenceMetadata(list_index=1, gender="M"),
@@ -954,7 +1005,6 @@ def test_prove_ballot_r3_generates_valid_proofs():
     layout = BallotLayout(
         list_count=2,
         max_preferences=3,
-        max_preferences_per_gender=2,
         preference_metadata=(
             PreferenceMetadata(
                 list_index=0,
@@ -1029,7 +1079,6 @@ def test_prove_ballot_r4_generates_valid_proof():
     layout = BallotLayout(
         list_count=2,
         max_preferences=3,
-        max_preferences_per_gender=2,
         preference_metadata=(
             PreferenceMetadata(list_index=0, gender="F"),
             PreferenceMetadata(list_index=0, gender="M"),
@@ -1083,15 +1132,15 @@ def test_prove_ballot_r4_generates_valid_proof():
     )
 
 
-def test_prove_ballot_r5_generates_valid_proofs_by_gender():
+def test_prove_ballot_r5_generates_valid_proof_by_gender():
     """
-    R5 deve raggruppare automaticamente le preferenze per genere.
+    R5 divide le caselle tra i due generi, il primo in ordine
+    alfabetico ("F") e poi l'altro ("M"), e produce una sola prova.
     """
 
     layout = BallotLayout(
         list_count=2,
         max_preferences=3,
-        max_preferences_per_gender=2,
         preference_metadata=(
             PreferenceMetadata(list_index=0, gender="F"),
             PreferenceMetadata(list_index=0, gender="M"),
@@ -1128,7 +1177,7 @@ def test_prove_ballot_r5_generates_valid_proofs_by_gender():
         preference_nonces=(40, 50, 60, 70),
     )
 
-    proofs = _prove_ballot_r5(
+    proof = _prove_ballot_r5(
         layout=layout,
         ballot=ballot,
         witness=witness,
@@ -1137,33 +1186,25 @@ def test_prove_ballot_r5_generates_valid_proofs_by_gender():
         context=CONTEXT,
     )
 
-    groups = _group_preference_indices_by_gender(
-        layout
-    )
+    first, second = gender_groups(layout)
 
-    assert len(proofs) == 2
-    assert groups == (
-        (0, 2),
-        (1, 3),
-    )
+    assert first == (0, 2)
+    assert second == (1, 3)
 
-    for indices, proof in zip(
-        groups,
-        proofs,
-    ):
-        gender_ciphertexts = tuple(
+    assert verify_r5(
+        first_ciphertexts=tuple(
             ballot.preference_ciphertexts[index]
-            for index in indices
-        )
-
-        assert verify_r5(
-            gender_ciphertexts=gender_ciphertexts,
-            proof=proof,
-            max_preferences_per_gender=2,
-            public_key=PUBLIC_KEY,
-            params=TEST_PARAMS,
-            context=CONTEXT,
-        )
+            for index in first
+        ),
+        second_ciphertexts=tuple(
+            ballot.preference_ciphertexts[index]
+            for index in second
+        ),
+        proof=proof,
+        public_key=PUBLIC_KEY,
+        params=TEST_PARAMS,
+        context=CONTEXT,
+    )
 
 
 def test_complete_ballot_proofs_are_valid():
@@ -1175,7 +1216,6 @@ def test_complete_ballot_proofs_are_valid():
     layout = BallotLayout(
         list_count=2,
         max_preferences=3,
-        max_preferences_per_gender=2,
         preference_metadata=(
             PreferenceMetadata(list_index=0, gender="F"),
             PreferenceMetadata(list_index=0, gender="M"),
@@ -1239,7 +1279,6 @@ def test_verify_ballot_rejects_missing_r1_proof():
     layout = BallotLayout(
         list_count=1,
         max_preferences=3,
-        max_preferences_per_gender=2,
         preference_metadata=(
             PreferenceMetadata(
                 list_index=0,
@@ -1286,7 +1325,7 @@ def test_verify_ballot_rejects_missing_r1_proof():
         r2_proof=proofs.r2_proof,
         r3_proofs=proofs.r3_proofs,
         r4_proof=proofs.r4_proof,
-        r5_proofs=proofs.r5_proofs,
+        r5_proof=proofs.r5_proof,
     )
 
     assert not verify_ballot(
@@ -1459,16 +1498,17 @@ def test_verify_ballot_rejects_missing_r3_proof():
     )
 
 
-def test_verify_ballot_rejects_missing_r5_proof():
+def test_verify_ballot_rejects_wrong_r5_proof():
     """
-    La verifica fallisce se manca una prova R5.
+    La verifica fallisce se al posto della prova R5 c'è un'altra prova
+    della stessa scheda, qui quella di R4.
     """
 
     layout, ballot, _, proofs = _build_valid_ballot_case()
 
     incomplete_proofs = replace(
         proofs,
-        r5_proofs=proofs.r5_proofs[:-1],
+        r5_proof=proofs.r4_proof,
     )
 
     assert not verify_ballot(
@@ -1500,7 +1540,6 @@ def test_prove_ballot_rejects_invalid_r2_choice(
     layout = BallotLayout(
         list_count=2,
         max_preferences=3,
-        max_preferences_per_gender=2,
         preference_metadata=(
             PreferenceMetadata(list_index=0, gender="F"),
             PreferenceMetadata(list_index=1, gender="M"),
@@ -1563,7 +1602,6 @@ def test_prove_ballot_rejects_preference_outside_selected_list():
     layout = BallotLayout(
         list_count=2,
         max_preferences=3,
-        max_preferences_per_gender=2,
         preference_metadata=(
             PreferenceMetadata(
                 list_index=1,
@@ -1617,7 +1655,6 @@ def test_prove_ballot_rejects_four_total_preferences():
     layout = BallotLayout(
         list_count=1,
         max_preferences=3,
-        max_preferences_per_gender=2,
         preference_metadata=(
             PreferenceMetadata(list_index=0, gender="F"),
             PreferenceMetadata(list_index=0, gender="M"),
@@ -1666,14 +1703,13 @@ def test_prove_ballot_rejects_four_total_preferences():
 
 def test_prove_ballot_rejects_three_preferences_same_gender():
     """
-    La scheda completa viene rifiutata se contiene
-    tre preferenze appartenenti allo stesso genere.
+    Un dispositivo scorretto che non annulla le preferenze in eccesso
+    non ottiene le prove per tre preferenze dello stesso genere.
     """
 
     layout = BallotLayout(
         list_count=1,
         max_preferences=3,
-        max_preferences_per_gender=2,
         preference_metadata=(
             PreferenceMetadata(list_index=0, gender="F"),
             PreferenceMetadata(list_index=0, gender="F"),
@@ -1759,42 +1795,88 @@ def test_r4_uses_configured_max_preferences():
     )
 
 
-def test_r5_uses_configured_max_preferences_per_gender():
+def test_layout_rejects_more_than_three_preferences():
     """
-    R5 usa il limite per genere configurato.
+    La regola di genere coincide con quella della legge solo fino a
+    tre preferenze, quindi la scheda non ne ammette di più.
     """
 
-    gender_plaintexts = (1, 0)
-    gender_nonces = (10, 20)
+    with pytest.raises(ValueError):
+        BallotLayout(
+            list_count=1,
+            max_preferences=4,
+            preference_metadata=(
+                PreferenceMetadata(list_index=0, gender="F"),
+            ),
+        )
 
-    gender_ciphertexts = tuple(
-        encrypt(
-            value,
-            PUBLIC_KEY,
-            TEST_PARAMS,
-            nonce=nonce,
+
+def test_layout_rejects_more_than_two_genders():
+    """
+    R5 confronta due generi: una scheda con tre generi non è ammessa.
+    """
+
+    with pytest.raises(ValueError):
+        BallotLayout(
+            list_count=1,
+            max_preferences=3,
+            preference_metadata=(
+                PreferenceMetadata(list_index=0, gender="F"),
+                PreferenceMetadata(list_index=0, gender="M"),
+                PreferenceMetadata(list_index=0, gender="X"),
+            ),
         )
-        for value, nonce in zip(
-            gender_plaintexts,
-            gender_nonces,
-        )
+
+
+def test_r5_with_a_single_gender_allows_one_preference():
+    """
+    Se la scheda ha candidati di un solo genere il secondo gruppo è
+    vuoto: una preferenza è ammessa, due no.
+    """
+
+    layout = BallotLayout(
+        list_count=1,
+        max_preferences=3,
+        preference_metadata=(
+            PreferenceMetadata(list_index=0, gender="F"),
+            PreferenceMetadata(list_index=0, gender="F"),
+        ),
     )
 
+    assert gender_groups(layout) == ((0, 1), ())
+
+    one = _encrypt_group((1, 0), (10, 20))
+
     proof = prove_r5(
-        gender_ciphertexts=gender_ciphertexts,
-        gender_plaintexts=gender_plaintexts,
-        gender_nonces=gender_nonces,
-        max_preferences_per_gender=1,
+        first_ciphertexts=one,
+        first_plaintexts=(1, 0),
+        first_nonces=(10, 20),
+        second_ciphertexts=(),
+        second_plaintexts=(),
+        second_nonces=(),
         public_key=PUBLIC_KEY,
         params=TEST_PARAMS,
         context=CONTEXT,
     )
 
     assert verify_r5(
-        gender_ciphertexts=gender_ciphertexts,
+        first_ciphertexts=one,
+        second_ciphertexts=(),
         proof=proof,
-        max_preferences_per_gender=1,
         public_key=PUBLIC_KEY,
         params=TEST_PARAMS,
         context=CONTEXT,
     )
+
+    with pytest.raises(ValueError):
+        prove_r5(
+            first_ciphertexts=_encrypt_group((1, 1), (10, 20)),
+            first_plaintexts=(1, 1),
+            first_nonces=(10, 20),
+            second_ciphertexts=(),
+            second_plaintexts=(),
+            second_nonces=(),
+            public_key=PUBLIC_KEY,
+            params=TEST_PARAMS,
+            context=CONTEXT,
+        )

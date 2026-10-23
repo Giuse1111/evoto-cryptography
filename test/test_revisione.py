@@ -104,7 +104,6 @@ def test_district_without_preference_boxes():
         list_count=2,
         preference_metadata=(),
         max_preferences=3,
-        max_preferences_per_gender=2,
     )
 
     prepared = prepare_ballot(
@@ -285,6 +284,9 @@ def test_registry_of_the_example_is_verified():
         lambda data: data["configuration"]["rules"].update(
             max_preferences_per_gender=10**12
         ),
+        lambda data: data["bulletin_board"]["entries"][1]["proofs"].update(
+            r5_proof=None
+        ),
         lambda data: data["bulletin_board"]["entries"][1].update(tracking_code=1.5),
     ],
 )
@@ -353,7 +355,6 @@ def append_forged_ballot(state: str) -> str:
         list_count=layout.list_count + 1,
         preference_metadata=layout.preference_metadata,
         max_preferences=layout.max_preferences,
-        max_preferences_per_gender=layout.max_preferences_per_gender,
     )
 
     context = data["election_context"]["Q_bar"]

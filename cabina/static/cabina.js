@@ -177,7 +177,10 @@
   }
 
   // Scheda: una preferenza segna la sua lista, le preferenze di altre
-  // liste vengono tolte, i limiti R4 e R5 vengono segnalati.
+  // liste vengono tolte, il limite R4 viene segnalato. Se le preferenze
+  // sono tutte dello stesso genere la pagina avvisa che, come prevede
+  // la legge, varrà solo la prima in ordine di lista: l'annullamento lo
+  // fa il dispositivo prima di cifrare.
   var form = document.getElementById("scheda");
 
   if (!form) {
@@ -185,7 +188,6 @@
   }
 
   var maxPreferences = Number(form.dataset.max);
-  var maxPerGender = Number(form.dataset.maxGender);
   var notice = document.getElementById("avviso");
   var faulty = document.getElementById("scorretto");
 
@@ -226,31 +228,36 @@
     });
   }
 
-  function checkLimits(changed) {
-    var chosen = preferences().filter(function (box) {
+  function chosenPreferences() {
+    return preferences().filter(function (box) {
       return box.checked;
     });
+  }
 
-    if (chosen.length > maxPreferences) {
+  // Restituisce true se ha dovuto togliere una preferenza di troppo.
+  function checkLimit(changed) {
+    if (chosenPreferences().length > maxPreferences) {
       changed.checked = false;
       warn("Al massimo " + maxPreferences + " preferenze (regola R4).");
-      return;
+      return true;
     }
 
-    var sameGender = chosen.filter(function (box) {
-      return box.dataset.gender === changed.dataset.gender;
+    return false;
+  }
+
+  function genderNotice() {
+    var chosen = chosenPreferences();
+
+    var sameGender = chosen.length > 1 && chosen.every(function (box) {
+      return box.dataset.gender === chosen[0].dataset.gender;
     });
 
-    if (sameGender.length > maxPerGender) {
-      changed.checked = false;
-      warn(
-        "Al massimo " + maxPerGender +
-        " preferenze dello stesso genere (regola R5)."
-      );
-      return;
-    }
-
-    warn("");
+    warn(
+      sameGender
+        ? "Preferenze tutte dello stesso genere: per legge vale solo la " +
+          "prima in ordine di lista, le altre saranno annullate."
+        : ""
+    );
   }
 
   preferences().forEach(function (box) {
@@ -263,9 +270,14 @@
       if (box.checked) {
         selectList(box.dataset.list);
         clearOtherLists(box.dataset.list);
-        checkLimits(box);
+
+        if (checkLimit(box)) {
+          highlight();
+          return;
+        }
       }
 
+      genderNotice();
       highlight();
     });
   });

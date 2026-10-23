@@ -25,7 +25,6 @@ from evoto.registro import (
     _bulletin_board_to_data,
     _district_result_to_data,
     _district_tally_to_data,
-    _election_config_to_data,
     _scrutiny_result_to_data,
 )
 from evoto.scheda import (
@@ -49,6 +48,7 @@ from evoto.configurazione import (
     District,
     ElectionConfig,
     ElectoralRules,
+    election_config_to_data,
 )
 from evoto.scrutinio import (
     Competitor,
@@ -296,9 +296,7 @@ def test_serializes_ballot_proofs():
             _test_value_set_proof(40),
         ),
         r4_proof=_test_value_set_proof(50),
-        r5_proofs=(
-            _test_value_set_proof(60),
-        ),
+        r5_proof=_test_value_set_proof(60),
     )
 
     data = _ballot_proofs_to_data(proofs)
@@ -323,7 +321,7 @@ def test_serializes_ballot_proofs():
         "commitment_1"
     ] == 50
 
-    assert data["r5_proofs"][0]["branches"][0][
+    assert data["r5_proof"]["branches"][0][
         "commitment_1"
     ] == 60
 
@@ -363,9 +361,7 @@ def _test_ballot_proofs() -> BallotProofs:
             _test_value_set_proof(50),
         ),
         r4_proof=_test_value_set_proof(60),
-        r5_proofs=(
-            _test_value_set_proof(70),
-        ),
+        r5_proof=_test_value_set_proof(70),
     )
 
 
@@ -647,7 +643,6 @@ def test_serializes_election_config():
         seats=10,
         rules=ElectoralRules(
             max_preferences=3,
-            max_preferences_per_gender=2,
             list_threshold=Fraction(3, 100),
             coalition_threshold=Fraction(1, 10),
             bonus_threshold=Fraction(21, 50),
@@ -688,13 +683,12 @@ def test_serializes_election_config():
         ),
     )
 
-    assert _election_config_to_data(config) == {
+    assert election_config_to_data(config) == {
         "name": "Elezione test",
         "election_id": 7,
         "seats": 10,
         "rules": {
             "max_preferences": 3,
-            "max_preferences_per_gender": 2,
             "list_threshold_percent": 3,
             "coalition_threshold_percent": 10,
             "bonus_threshold_percent": 42,

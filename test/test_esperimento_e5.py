@@ -1,9 +1,9 @@
 """
 Test dell'esperimento E5 (costi di una scheda politica).
 
-I conteggi della scheda di riferimento sono quelli della sezione 2.5
-della proposta di progetto: 10 liste con capolista più 8 candidati
-danno 91 cifrati e 175 prove.
+La scheda di riferimento è quella della sezione 2.5 della proposta di
+progetto: 10 liste con capolista più 8 candidati danno 91 cifrati e,
+con la regola di genere a una sola prova, 174 prove.
 """
 
 import argparse
@@ -54,9 +54,8 @@ REFERENCE_DIMENSIONS = BallotDimensions(
     ciphertexts=91,
     r1_proofs=91,
     r3_proofs=80,
-    r5_proofs=2,
-    proofs=175,
-    branches=353,
+    proofs=174,
+    branches=350,
 )
 
 
@@ -75,7 +74,8 @@ def test_eg_4096_parameters_are_valid():
 def test_synthetic_layout_of_the_reference_ballot():
     """
     10 liste con 8 candidati ciascuna (oltre al capolista):
-    80 caselle di preferenza, generi alternati, limiti 3 e 2.
+    80 caselle di preferenza, generi alternati, al massimo 3
+    preferenze.
     """
 
     layout = synthetic_layout(10, 8)
@@ -83,7 +83,6 @@ def test_synthetic_layout_of_the_reference_ballot():
     assert layout.list_count == 10
     assert len(layout.preference_metadata) == 80
     assert layout.max_preferences == 3
-    assert layout.max_preferences_per_gender == 2
 
     assert layout.preference_metadata[:3] == (
         PreferenceMetadata(list_index=0, gender="M"),
@@ -136,10 +135,10 @@ def test_reference_ballot_dimensions():
     """
     R1: 91 prove a 2 rami;  R2: 1 prova a 1 ramo;
     R3: 80 prove a 2 rami;  R4: 1 prova a 4 rami ({0, 1, 2, 3});
-    R5: 2 prove a 3 rami ({0, 1, 2}), una per genere.
+    R5: 1 prova a 3 rami ({0, 1, 2}), la regola di genere.
 
-        prove = 91 + 1 + 80 + 1 + 2 = 175
-        rami  = 182 + 1 + 160 + 4 + 6 = 353
+        prove = 91 + 1 + 80 + 1 + 1 = 174
+        rami  = 182 + 1 + 160 + 4 + 3 = 350
     """
 
     layout = synthetic_layout(10, 8)
@@ -159,33 +158,58 @@ def test_reference_ballot_dimensions():
     ) == REFERENCE_DIMENSIONS
 
 
+def test_reference_verification_cost_matches_the_formula():
+    """
+    La verifica della scheda di riferimento costa cinque
+    esponenziazioni per ramo più un controllo di appartenenza per la
+    chiave e per ciascuno dei 182 elementi dei cifrati:
+
+        5 · 350 + 1 + 182 = 1933
+
+    Il conteggio non dipende dal gruppo, quindi basta quello didattico.
+    """
+
+    measure = measure_ballot(
+        layout=synthetic_layout(10, 8),
+        params=TEST_PARAMS,
+        group="didattico",
+        public_key=CEREMONY.joint_public_key,
+        context=CEREMONY.extended_base_hash,
+        repetitions=1,
+    )
+
+    assert measure.branches == 350
+    assert measure.verify_membership_checks == 183
+    assert measure.verify_exponentiations == 5 * 350 + 183 == 1933
+
+
 def test_ballot_size_in_the_demo_group():
     """
     Gruppo demo: elementi da 256 byte, scalari da 32 byte.
 
-        compatta    = 182 · 256 + 706 · 32 = 46592 + 22592 = 69184
-        con impegni = 888 · 256 + 706 · 32 = 227328 + 22592 = 249920
+        compatta    = 182 · 256 + 700 · 32 = 46592 + 22400 = 68992
+        con impegni = 882 · 256 + 700 · 32 = 225792 + 22400 = 248192
 
-    dove 182 = 2 · 91 elementi dei cifrati, 706 = 2 · 353 impegni
+    dove 182 = 2 · 91 elementi dei cifrati, 700 = 2 · 350 impegni
     (o scalari) dei rami.
     """
 
-    assert ballot_size(REFERENCE_DIMENSIONS, DEMO_PARAMS, compact=True) == 69184
-    assert ballot_size(REFERENCE_DIMENSIONS, DEMO_PARAMS, compact=False) == 249920
+    assert ballot_size(REFERENCE_DIMENSIONS, DEMO_PARAMS, compact=True) == 68992
+    assert ballot_size(REFERENCE_DIMENSIONS, DEMO_PARAMS, compact=False) == 248192
 
 
 def test_ballot_size_in_the_4096_group():
     """
     Gruppo da 4096 bit: elementi da 512 byte.
 
-        compatta    = 182 · 512 + 22592 = 115776   (circa 0,1 MB)
-        con impegni = 888 · 512 + 22592 = 477248   (circa 0,5 MB)
+        compatta    = 182 · 512 + 22400 = 115584   (circa 0,1 MB)
+        con impegni = 882 · 512 + 22400 = 473984   (circa 0,5 MB)
 
     Sono le stime della sezione 2.5 della proposta.
     """
 
-    assert ballot_size(REFERENCE_DIMENSIONS, EG_4096_PARAMS, compact=True) == 115776
-    assert ballot_size(REFERENCE_DIMENSIONS, EG_4096_PARAMS, compact=False) == 477248
+    assert ballot_size(REFERENCE_DIMENSIONS, EG_4096_PARAMS, compact=True) == 115584
+    assert ballot_size(REFERENCE_DIMENSIONS, EG_4096_PARAMS, compact=False) == 473984
 
 
 def test_count_exponentiations_counts_and_restores():
@@ -212,7 +236,9 @@ def test_measure_ballot_in_the_test_group():
     2 candidati ciascuna:
 
         cifrati = 2 + 1 + 4 = 7
-        prove   = 7 + 1 + 4 + 1 + 2 = 15
+        prove   = 7 + 1 + 4 + 1 + 1 = 14
+
+    Tra le ripetizioni la mediana sta tra il minimo e il massimo.
     """
 
     measure = measure_ballot(
@@ -226,7 +252,17 @@ def test_measure_ballot_in_the_test_group():
 
     assert measure.implementation == "gmpy2"
     assert measure.ciphertexts == 7
-    assert measure.proofs == 15
+    assert measure.proofs == 14
+    assert (
+        measure.encrypt_seconds_min
+        <= measure.encrypt_seconds
+        <= measure.encrypt_seconds_max
+    )
+    assert (
+        measure.verify_seconds_min
+        <= measure.verify_seconds
+        <= measure.verify_seconds_max
+    )
     assert measure.encrypt_exponentiations > 0
     assert 0 < measure.verify_membership_checks < measure.verify_exponentiations
     assert measure.compact_size < measure.full_size

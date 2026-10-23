@@ -30,6 +30,7 @@ from evoto.configurazione import (
     ElectionConfig,
     build_ballot_layout,
     coalition_of,
+    config_fingerprint,
     preference_candidates,
 )
 from evoto.garanti import (
@@ -66,10 +67,14 @@ from evoto.urna import (
 from evoto.voto import (
     PreparedBallot,
     VoterChoice,
+    apply_gender_rule,
     choice_to_plaintexts,
     prepare_ballot,
 )
-from verifica.verifica import verify_public_registry
+from verifica.verifica import (
+    recompute_v8_scrutiny,
+    verify_public_registry,
+)
 
 
 # Pesi delle liste per la configurazione di esempio, come in demo.py:
@@ -90,7 +95,7 @@ SIMULATED_SPOIL_PROBABILITY = 0.05
 # Descrizione dei controlli del verificatore indipendente.
 CHECK_DESCRIPTIONS = {
     "V1": "Parametri del gruppo e chiave pubblica",
-    "V2": "Prove di Schnorr dei garanti, chiave congiunta, Q e Q_bar",
+    "V2": "Impronta della configurazione, Q, prove di Schnorr dei garanti, chiave congiunta e Q_bar",
     "V3": "Prove R1-R5 di ogni scheda",
     "V4": "Catena dei codici, schede sprecate ricifrate, nessuna copia",
     "V5": "Totali cifrati ricalcolati dalle sole schede depositate",
@@ -102,7 +107,7 @@ CHECK_DESCRIPTIONS = {
 # Gli stessi controlli spiegati a chi non conosce la crittografia.
 PLAIN_CHECK_DESCRIPTIONS = {
     "V1": "I numeri di base dell'elezione sono ben formati",
-    "V2": "I garanti hanno creato la chiave correttamente",
+    "V2": "Le regole pubblicate sono quelle dell'elezione e i garanti hanno creato la chiave correttamente",
     "V3": "Ogni scheda rispetta le regole",
     "V4": "La bacheca è integra: nessuna scheda tolta, cambiata o copiata",
     "V5": "I totali contengono tutte e sole le schede depositate",
@@ -319,6 +324,10 @@ def explain_violation(
 
     Serve solo per il messaggio all'elettore: il rifiuto vero viene
     dalle prove, che non si riescono a costruire.
+
+    R5 non compare: il dispositivo annulla prima di cifrare le
+    preferenze che la regola di genere non ammette (apply_gender_rule),
+    quindi una scelta non può violarla.
     """
 
     list_index = choice.list_index
@@ -330,25 +339,26 @@ def explain_violation(
         if layout.preference_metadata[box].list_index != list_index:
             return "R3 (una preferenza è per un candidato di un'altra lista)"
 
-    if len(choice.preferences) > layout.max_preferences:
+    kept, _ = apply_gender_rule(layout, choice.preferences)
+
+    if len(kept) > layout.max_preferences:
         return f"R4 (più di {layout.max_preferences} preferenze)"
 
-    per_gender: dict[str, int] = {}
-
-    for box in choice.preferences:
-        gender = layout.preference_metadata[box].gender
-        per_gender[gender] = per_gender.get(gender, 0) + 1
-
-    if any(
-        count > layout.max_preferences_per_gender
-        for count in per_gender.values()
-    ):
-        return (
-            f"R5 (più di {layout.max_preferences_per_gender} preferenze "
-            "dello stesso genere)"
-        )
-
     return None
+
+
+def annulled_preferences(
+    layout: BallotLayout,
+    choice: VoterChoice,
+) -> tuple[int, ...]:
+    """
+    Caselle di preferenza che la regola di genere annulla, per avvisare
+    l'elettore nella pagina di conferma.
+    """
+
+    _, annulled = apply_gender_rule(layout, choice.preferences)
+
+    return annulled
 
 
 def _tamper_vote(data: dict) -> None:
@@ -399,6 +409,18 @@ def _tamper_guardian(data: dict) -> None:
     proof["response"] = (proof["response"] + 1) % q
 
 
+def _tamper_configuration(data: dict) -> None:
+    # La soglia del premio sale al 50% e lo scrutinio viene rifatto con
+    # la nuova regola, così seggi e regole restano coerenti tra loro:
+    # V8 non vede nulla, se ne accorge V2 con l'impronta della
+    # configurazione.
+    data["configuration"]["rules"]["bonus_threshold_percent"] = 50
+    data["scrutiny"] = recompute_v8_scrutiny(
+        data["configuration"],
+        data["district_results"],
+    )
+
+
 # Manomissioni dimostrative del registro (esperimento E3 dal vivo).
 TAMPERINGS: dict[str, tuple[str, Callable[[dict], None]]] = {
     "voto": (
@@ -424,6 +446,10 @@ TAMPERINGS: dict[str, tuple[str, Callable[[dict], None]]] = {
     "garante": (
         "La prova di Schnorr di un garante alterata",
         _tamper_guardian,
+    ),
+    "configurazione": (
+        "La soglia del premio portata al 50% e seggi ricalcolati di conseguenza",
+        _tamper_configuration,
     ),
 }
 
@@ -462,7 +488,7 @@ class ElectionSession:
             guardian_count=guardian_count,
             quorum=quorum,
             params=params,
-            election_id=config.election_id,
+            election_id=config_fingerprint(config, params),
         )
 
         self.layouts = tuple(
@@ -577,7 +603,6 @@ class ElectionSession:
                 weights,
                 blank_probability,
                 self.config.rules.max_preferences,
-                self.config.rules.max_preferences_per_gender,
             )
 
             if rng.random() < spoil_probability:

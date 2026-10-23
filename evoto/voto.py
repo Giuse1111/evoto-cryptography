@@ -60,6 +60,41 @@ class PreparedBallot:
     ballot_hash: int
 
 
+def apply_gender_rule(
+    layout: BallotLayout,
+    preferences: tuple[int, ...],
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """
+    Applica la regola di genere della legge alle preferenze segnate.
+
+    Se le preferenze sono più di una devono riguardare candidati di
+    genere diverso; altrimenti la seconda e la terza, nell'ordine di
+    lista, sono annullate (legge 9 ottobre 2026, n. 180, art. 1,
+    comma 4). Le caselle di una lista seguono l'ordine dei candidati,
+    quindi l'ordine di lista è quello degli indici.
+
+    Restituisce le preferenze che restano e quelle annullate. Il
+    dispositivo applica la regola prima di cifrare, come farebbe lo
+    scrutatore con una scheda di carta; la prova R5 garantisce poi che
+    la scheda cifrata la rispetti.
+    """
+
+    ordered = tuple(sorted(preferences))
+
+    if len(ordered) < 2:
+        return ordered, ()
+
+    genders = {
+        layout.preference_metadata[preference].gender
+        for preference in ordered
+    }
+
+    if len(genders) > 1:
+        return ordered, ()
+
+    return ordered[:1], ordered[1:]
+
+
 def choice_to_plaintexts(
     layout: BallotLayout,
     choice: VoterChoice,
@@ -71,10 +106,13 @@ def choice_to_plaintexts(
     segnare la lista vale anche per la lista: se tutte le preferenze
     appartengono alla stessa lista, il dispositivo segna quella lista.
 
-    Qui controlliamo solo la forma della scelta. Il rispetto delle regole
-    (preferenze nella lista votata, al massimo tre, vincolo di genere)
-    è garantito dalle prove: una scelta che le viola non riesce a
-    produrre una scheda valida.
+    Le preferenze tutte dello stesso genere vengono ridotte alla prima
+    in ordine di lista (apply_gender_rule), come prevede la legge.
+
+    Per il resto controlliamo solo la forma della scelta. Il rispetto
+    delle regole (preferenze nella lista votata, al massimo tre, regola
+    di genere) è garantito dalle prove: una scelta che le viola non
+    riesce a produrre una scheda valida.
     """
 
     preference_count = len(layout.preference_metadata)
@@ -85,6 +123,11 @@ def choice_to_plaintexts(
     for preference in choice.preferences:
         if not 0 <= preference < preference_count:
             raise ValueError("La casella di preferenza non esiste.")
+
+    preferences, _ = apply_gender_rule(
+        layout,
+        choice.preferences,
+    )
 
     list_index = choice.list_index
 
@@ -112,7 +155,7 @@ def choice_to_plaintexts(
     blank_plaintext = 1 if list_index is None else 0
 
     preference_plaintexts = tuple(
-        1 if index in choice.preferences else 0
+        1 if index in preferences else 0
         for index in range(preference_count)
     )
 

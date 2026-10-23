@@ -1030,33 +1030,98 @@ def test_v3_r4_rule_accepts_three_preferences():
     )
 
 
-def test_v3_r5_rule_accepts_two_preferences_same_gender():
+def test_v3_r5_rule_accepts_preferences_of_both_genders():
     """
-    R5 accetta al massimo due preferenze
-    dello stesso genere.
+    R5 accetta due preferenze del primo genere e una del secondo: il
+    cifrato derivato contiene 2 - 1 + 1 = 2, con nonce
+    10 + 20 - 30 = 0.
     """
 
-    ciphertexts = (
+    first = (
         _encrypt_for_verifier_test(1, 10),
         _encrypt_for_verifier_test(1, 20),
-        _encrypt_for_verifier_test(0, 30),
+    )
+
+    second = (
+        _encrypt_for_verifier_test(1, 30),
+        _encrypt_for_verifier_test(0, 40),
     )
 
     _, branches = _build_value_set_test_proof(
         plaintext=2,
-        nonce=60,
+        nonce=(10 + 20 - 30 - 40) % 1289,
         allowed_values=(0, 1, 2),
     )
 
     assert verify_r5_rule(
-        gender_ciphertexts=ciphertexts,
+        first_ciphertexts=first,
+        second_ciphertexts=second,
         branches=branches,
         p=2579,
         q=1289,
         g=4,
         public_key=530,
         context=744,
-        max_preferences_per_gender=2,
+    )
+
+
+def test_v3_r5_rule_rejects_wrong_number_of_branches():
+    """
+    La prova R5 ha sempre tre rami, uno per ciascun valore ammesso.
+    """
+
+    first = (
+        _encrypt_for_verifier_test(1, 10),
+    )
+
+    _, branches = _build_value_set_test_proof(
+        plaintext=2,
+        nonce=10,
+        allowed_values=(0, 1, 2, 3),
+    )
+
+    assert not verify_r5_rule(
+        first_ciphertexts=first,
+        second_ciphertexts=(),
+        branches=branches,
+        p=2579,
+        q=1289,
+        g=4,
+        public_key=530,
+        context=744,
+    )
+
+
+def test_v3_r5_rule_rejects_swapped_genders():
+    """
+    Il cifrato derivato è (primo genere) - (secondo genere) + 1: con i
+    gruppi scambiati la prova non vale più.
+    """
+
+    first = (
+        _encrypt_for_verifier_test(1, 10),
+        _encrypt_for_verifier_test(1, 20),
+    )
+
+    second = (
+        _encrypt_for_verifier_test(1, 30),
+    )
+
+    _, branches = _build_value_set_test_proof(
+        plaintext=2,
+        nonce=0,
+        allowed_values=(0, 1, 2),
+    )
+
+    assert not verify_r5_rule(
+        first_ciphertexts=second,
+        second_ciphertexts=first,
+        branches=branches,
+        p=2579,
+        q=1289,
+        g=4,
+        public_key=530,
+        context=744,
     )
 
 
@@ -1198,34 +1263,6 @@ def test_v3_r4_rule_uses_configured_limit():
     )
 
 
-def test_v3_r5_rule_uses_configured_limit():
-    """
-    R5 usa il limite per genere configurato.
-    """
-
-    ciphertexts = (
-        _encrypt_for_verifier_test(1, 10),
-        _encrypt_for_verifier_test(0, 20),
-    )
-
-    _, branches = _build_value_set_test_proof(
-        plaintext=1,
-        nonce=30,
-        allowed_values=(0, 1),
-    )
-
-    assert verify_r5_rule(
-        gender_ciphertexts=ciphertexts,
-        branches=branches,
-        p=2579,
-        q=1289,
-        g=4,
-        public_key=530,
-        context=744,
-        max_preferences_per_gender=1,
-    )
-
-
 def test_v3_r4_rule_rejects_negative_limit():
     """
     R4 rifiuta un limite negativo.
@@ -1242,25 +1279,6 @@ def test_v3_r4_rule_rejects_negative_limit():
         public_key=530,
         context=744,
         max_preferences=-1,
-    )
-
-
-def test_v3_r5_rule_rejects_negative_limit():
-    """
-    R5 rifiuta un limite per genere negativo.
-    """
-
-    assert not verify_r5_rule(
-        gender_ciphertexts=(
-            _encrypt_for_verifier_test(0, 10),
-        ),
-        branches=(),
-        p=2579,
-        q=1289,
-        g=4,
-        public_key=530,
-        context=744,
-        max_preferences_per_gender=-1,
     )
 
 
@@ -2096,7 +2114,6 @@ def _v8_test_data() -> tuple[
         "seats": 3,
         "rules": {
             "max_preferences": 1,
-            "max_preferences_per_gender": 1,
             "list_threshold_percent": 0,
             "coalition_threshold_percent": 0,
             "bonus_threshold_percent": 100,

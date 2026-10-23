@@ -68,7 +68,6 @@ def config_data(
         "seats": 10,
         "rules": {
             "max_preferences": 3,
-            "max_preferences_per_gender": 2,
             "list_threshold_percent": 3,
             "coalition_threshold_percent": 10,
             "bonus_threshold_percent": 42,

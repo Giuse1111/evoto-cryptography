@@ -13,11 +13,15 @@ import pytest
 
 from evoto.configurazione import (
     build_ballot_layout,
+    canonical_config_json,
     coalition_of,
+    config_fingerprint,
+    election_config_to_data,
     load_election_config,
     parse_election_config,
     preference_candidates,
 )
+from evoto.gruppo import DEMO_PARAMS, TEST_PARAMS
 from evoto.scheda import PreferenceMetadata
 
 
@@ -43,7 +47,6 @@ def small_config_data() -> dict:
         "seats": 1,
         "rules": {
             "max_preferences": 3,
-            "max_preferences_per_gender": 2,
             "list_threshold_percent": 3,
             "coalition_threshold_percent": 10,
             "bonus_threshold_percent": 42,
@@ -280,20 +283,18 @@ def test_rejects_non_positive_seats():
         parse_election_config(data)
 
 
-def test_layout_uses_configured_preference_limits():
+def test_layout_uses_configured_preference_limit():
     """
-    Il layout usa i limiti definiti nella configurazione.
+    Il layout usa il limite di preferenze definito nella configurazione.
     """
 
     data = copy.deepcopy(small_config_data())
     data["rules"]["max_preferences"] = 2
-    data["rules"]["max_preferences_per_gender"] = 1
 
     config = parse_election_config(data)
     layout = build_ballot_layout(config, 0)
 
     assert layout.max_preferences == 2
-    assert layout.max_preferences_per_gender == 1
 
 
 def test_layout_rejects_unknown_district():
@@ -335,7 +336,7 @@ def test_rejects_lists_with_fewer_candidates_than_seats():
 
 def test_genders_are_normalized():
     """
-    "m" e " M " sono lo stesso genere per il vincolo R5.
+    "m" e " M " sono lo stesso genere per la regola R5.
     """
 
     data = small_config_data()
@@ -346,14 +347,125 @@ def test_genders_are_normalized():
     assert config.districts[0].candidates[0][2].gender == "M"
 
 
-def test_rejects_gender_limit_above_preference_limit():
+def test_rejects_the_old_gender_limit():
     """
-    Il limite per genere non può superare il numero di preferenze.
+    Il vecchio limite per genere non esiste più: la regola di genere
+    segue la legge. Un file che lo contiene viene rifiutato, così non si
+    pensa che quel limite venga applicato.
     """
 
     data = small_config_data()
-    data["rules"]["max_preferences"] = 1
     data["rules"]["max_preferences_per_gender"] = 2
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="max_preferences_per_gender"):
         parse_election_config(data)
+
+
+def test_rejects_more_than_three_preferences():
+    """
+    La regola di genere coincide con quella della legge fino a tre
+    preferenze, quindi la configurazione non ne ammette di più.
+    """
+
+    data = small_config_data()
+    data["rules"]["max_preferences"] = 4
+
+    with pytest.raises(ValueError, match="max_preferences"):
+        parse_election_config(data)
+
+
+def test_rejects_more_than_two_genders():
+    """
+    La regola di genere confronta due generi.
+    """
+
+    data = small_config_data()
+    data["districts"][0]["candidates"]["Lista C"][1]["gender"] = "X"
+
+    with pytest.raises(ValueError, match="due generi"):
+        parse_election_config(data)
+
+
+def test_fingerprint_does_not_depend_on_key_order_or_spacing():
+    """
+    L'impronta si calcola sul JSON canonico: l'ordine delle chiavi nel
+    file e il modo di scrivere il genere non contano.
+    """
+
+    data = small_config_data()
+
+    reordered = dict(reversed(list(copy.deepcopy(data).items())))
+    reordered["districts"][0]["candidates"]["Lista A"][1]["gender"] = " f "
+
+    first = parse_election_config(data)
+    second = parse_election_config(reordered)
+
+    assert config_fingerprint(first, TEST_PARAMS) == config_fingerprint(
+        second,
+        TEST_PARAMS,
+    )
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    [
+        ("rules", "bonus_threshold_percent", 50),
+        ("rules", "list_threshold_percent", 4),
+        ("rules", "max_preferences", 2),
+        (None, "seats", 2),
+        (None, "election_id", 6),
+    ],
+)
+def test_fingerprint_changes_with_the_rules(section, field, value):
+    """
+    Cambiare una qualunque regola cambia l'impronta, quindi il
+    contesto Q e tutte le prove dell'elezione.
+    """
+
+    data = small_config_data()
+    data["districts"][0]["candidates"]["Lista B"].append(
+        {"name": "B1", "gender": "M"}
+    )
+    data["districts"][0]["candidates"]["Lista C"].append(
+        {"name": "C2", "gender": "F"}
+    )
+
+    original = config_fingerprint(parse_election_config(data), DEMO_PARAMS)
+
+    changed = copy.deepcopy(data)
+    target = changed if section is None else changed[section]
+    target[field] = value
+
+    assert config_fingerprint(
+        parse_election_config(changed),
+        DEMO_PARAMS,
+    ) != original
+
+
+def test_fingerprint_is_sha256_of_the_canonical_json():
+    """
+    L'impronta è SHA-256 del JSON canonico ridotto modulo q: la si può
+    ricalcolare senza la libreria, come fa il verificatore.
+    """
+
+    import hashlib
+    import json
+
+    config = load_election_config(EXAMPLE_PATH)
+    data = election_config_to_data(config)
+    canonical = canonical_config_json(data)
+
+    assert canonical == json.dumps(
+        data,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    assert canonical.startswith('{"districts":[')
+
+    expected = int.from_bytes(
+        hashlib.sha256(canonical.encode("utf-8")).digest(),
+        "big",
+    ) % DEMO_PARAMS.q
+
+    assert config_fingerprint(config, DEMO_PARAMS) == expected

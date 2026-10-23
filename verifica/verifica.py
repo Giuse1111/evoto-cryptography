@@ -505,8 +505,18 @@ def verify_r4_rule(
     )
 
 
+# Regola di genere R5 (sezione 17 della specifica): il cifrato derivato
+# contiene (preferenze del primo genere) - (preferenze del secondo) + 1,
+# che deve valere 0, 1 oppure 2.
+R5_ALLOWED_VALUES = (0, 1, 2)
+
+
 def verify_r5_rule(
-    gender_ciphertexts: tuple[
+    first_ciphertexts: tuple[
+        tuple[int, int],
+        ...,
+    ],
+    second_ciphertexts: tuple[
         tuple[int, int],
         ...,
     ],
@@ -519,38 +529,47 @@ def verify_r5_rule(
     g: int,
     public_key: int,
     context: int,
-    max_preferences_per_gender: int,
     check_membership: bool = True,
 ) -> bool:
     """
-    Verifica R5 per un singolo genere.
+    Verifica R5, la regola di genere.
 
-    La somma delle preferenze del genere deve essere compresa
-    tra 0 e il limite per genere configurato.
-
-    Come in R4, il numero di rami si controlla prima di costruire
-    l'insieme dei valori ammessi.
+    Il prodotto dei cifrati del primo genere, diviso il prodotto di
+    quelli del secondo e moltiplicato per (1, g), cioè per la cifratura
+    di 1 con nonce 0, contiene la differenza tra le preferenze dei due
+    generi più 1. La prova deve mostrare che vale 0, 1 oppure 2: le
+    preferenze dei due generi differiscono al più di 1.
     """
 
-    if (
-        not isinstance(max_preferences_per_gender, int)
-        or isinstance(max_preferences_per_gender, bool)
-        or max_preferences_per_gender < 0
-    ):
-        return False
-
-    if len(branches) != max_preferences_per_gender + 1:
+    if len(branches) != len(R5_ALLOWED_VALUES):
         return False
 
     try:
-        alpha, beta = multiply_ciphertexts(
-            ciphertexts=gender_ciphertexts,
+        first = multiply_ciphertexts(
+            ciphertexts=first_ciphertexts,
             p=p,
             q=q,
             check_membership=check_membership,
         )
+
+        second = multiply_ciphertexts(
+            ciphertexts=second_ciphertexts,
+            p=p,
+            q=q,
+            check_membership=check_membership,
+        )
+
+        alpha, beta = divide_ciphertexts(
+            numerator=first,
+            denominator=second,
+            p=p,
+            q=q,
+            check_membership=False,
+        )
     except ValueError:
         return False
+
+    beta = beta * g % p
 
     return verify_value_set_proof(
         p=p,
@@ -560,12 +579,41 @@ def verify_r5_rule(
         context=context,
         alpha=alpha,
         beta=beta,
-        allowed_values=tuple(
-            range(max_preferences_per_gender + 1)
-        ),
+        allowed_values=R5_ALLOWED_VALUES,
         branches=branches,
         check_membership=check_membership,
     )
+
+
+def configuration_fingerprint(
+    configuration: dict,
+    q: int,
+) -> int:
+    """
+    Impronta della configurazione pubblicata nel registro.
+
+    SHA-256 del JSON canonico (chiavi in ordine alfabetico, nessuno
+    spazio, caratteri non ASCII lasciati come sono), ridotto modulo q.
+    È il valore e del contesto Q: V2 controlla che coincida con quello
+    del registro, così una configurazione cambiata dopo la cerimonia
+    non è più quella delle prove.
+    """
+
+    canonical = json.dumps(
+        configuration,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+
+    digest = hashlib.sha256(
+        canonical.encode("utf-8")
+    ).digest()
+
+    return int.from_bytes(
+        digest,
+        "big",
+    ) % q
 
 
 def verify_schnorr_commitment(
@@ -3457,8 +3505,12 @@ def verify_v2_guardians(
         ):
             return False
 
-        if configuration.get(
-            "election_id"
+        # e è l'impronta della configurazione pubblicata: la ricalcoliamo
+        # noi. Se la configurazione è stata cambiata dopo la cerimonia,
+        # e non torna; se si cambia anche e, non tornano Q e le prove.
+        if configuration_fingerprint(
+            configuration,
+            q,
         ) != election_id:
             return False
 
@@ -3636,9 +3688,15 @@ def verify_v3_ballots(
         max_preferences = rules[
             "max_preferences"
         ]
-        max_per_gender = rules[
-            "max_preferences_per_gender"
-        ]
+
+        # La regola di genere R5 è definita per al massimo tre
+        # preferenze (sezione 17 della specifica).
+        if (
+            not isinstance(max_preferences, int)
+            or isinstance(max_preferences, bool)
+            or not 0 <= max_preferences <= 3
+        ):
+            return False
 
         entries = board["entries"]
         list_count = len(configuration["lists"])
@@ -3695,14 +3753,10 @@ def verify_v3_ballots(
             r3_proofs = proofs.get(
                 "r3_proofs"
             )
-            r5_proofs = proofs.get(
-                "r5_proofs"
-            )
 
             if (
                 not isinstance(r1_proofs, list)
                 or not isinstance(r3_proofs, list)
-                or not isinstance(r5_proofs, list)
             ):
                 return False
 
@@ -3826,52 +3880,51 @@ def verify_v3_ballots(
             ):
                 return False
 
-            gender_order = []
+            # R5: il primo genere è quello che viene prima in ordine
+            # alfabetico; i generi devono essere al massimo due.
+            genders = sorted(
+                {
+                    gender
+                    for _, gender in metadata
+                }
+            )
 
-            for _, gender in metadata:
-                if gender not in gender_order:
-                    gender_order.append(
-                        gender
-                    )
-
-            if len(r5_proofs) != len(
-                gender_order
-            ):
+            if len(genders) > 2:
                 return False
 
-            for gender_index, gender in enumerate(
-                gender_order
-            ):
-                gender_ciphertexts = tuple(
-                    preference_ciphertexts[
-                        preference_index
-                    ]
-                    for preference_index, (
-                        _,
-                        preference_gender,
-                    ) in enumerate(metadata)
-                    if preference_gender == gender
+            first_ciphertexts = tuple(
+                preference_ciphertexts[preference_index]
+                for preference_index, (_, gender) in enumerate(
+                    metadata
                 )
+                if gender == genders[0]
+            )
 
-                if not verify_r5_rule(
-                    gender_ciphertexts=
-                        gender_ciphertexts,
-                    branches=
-                        _proof_branches_from_data(
-                            r5_proofs[
-                                gender_index
-                            ]
-                        ),
-                    p=p,
-                    q=q,
-                    g=g,
-                    public_key=public_key,
-                    context=q_bar,
-                    max_preferences_per_gender=
-                        max_per_gender,
-                    check_membership=False,
-                ):
-                    return False
+            second_ciphertexts = tuple(
+                preference_ciphertexts[preference_index]
+                for preference_index, (_, gender) in enumerate(
+                    metadata
+                )
+                if len(genders) > 1 and gender == genders[1]
+            )
+
+            if not verify_r5_rule(
+                first_ciphertexts=first_ciphertexts,
+                second_ciphertexts=second_ciphertexts,
+                branches=
+                    _proof_branches_from_data(
+                        proofs.get(
+                            "r5_proof"
+                        )
+                    ),
+                p=p,
+                q=q,
+                g=g,
+                public_key=public_key,
+                context=q_bar,
+                check_membership=False,
+            ):
+                return False
 
     except (
         KeyError,

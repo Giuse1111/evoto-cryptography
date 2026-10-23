@@ -189,7 +189,8 @@ class BallotDimensions:
     Struttura di una scheda cifrata con le sue prove.
 
     ciphertexts: m = liste + 1 (bianca) + caselle di preferenza.
-    proofs: prove R1-R5, cioè m + 1 + preferenze + 1 + generi.
+    proofs: prove R1-R5, cioè m (R1) + 1 (R2) + preferenze (R3)
+    + 1 (R4) + 1 (R5).
     branches: rami delle prove OR; ogni ramo ha due impegni,
     una sfida e una risposta.
     """
@@ -197,7 +198,6 @@ class BallotDimensions:
     ciphertexts: int
     r1_proofs: int
     r3_proofs: int
-    r5_proofs: int
     proofs: int
     branches: int
 
@@ -208,8 +208,8 @@ class BallotMeasure:
     Misure di una scheda in una configurazione e in un gruppo.
 
     implementation è gmpy2 oppure python (pow() di Python).
-    Le dimensioni sono in byte, i tempi in secondi (mediana delle
-    ripetizioni).
+    Le dimensioni sono in byte, i tempi in secondi: mediana, minimo e
+    massimo delle ripetizioni.
     """
 
     group: str
@@ -228,6 +228,10 @@ class BallotMeasure:
     verify_membership_checks: int
     encrypt_seconds: float
     verify_seconds: float
+    encrypt_seconds_min: float
+    encrypt_seconds_max: float
+    verify_seconds_min: float
+    verify_seconds_max: float
 
 
 @dataclass(frozen=True)
@@ -268,7 +272,6 @@ def synthetic_layout(
     list_count: int,
     candidates_per_list: int,
     max_preferences: int = 3,
-    max_preferences_per_gender: int = 2,
 ) -> BallotLayout:
     """
     Costruisce la scheda di una circoscrizione con liste tutte uguali.
@@ -297,7 +300,6 @@ def synthetic_layout(
         list_count=list_count,
         preference_metadata=metadata,
         max_preferences=max_preferences,
-        max_preferences_per_gender=max_preferences_per_gender,
     )
 
 
@@ -307,8 +309,8 @@ def sample_choice(
     """
     Voto alla prima lista con il massimo di preferenze consentito.
 
-    Le prime caselle della lista hanno genere alternato, quindi con al
-    massimo tre preferenze il vincolo di genere è sempre rispettato.
+    Le prime caselle della lista hanno genere alternato, quindi la
+    regola di genere è rispettata e nessuna preferenza viene annullata.
     """
 
     candidates = sum(
@@ -319,7 +321,6 @@ def sample_choice(
     count = min(
         candidates,
         layout.max_preferences,
-        2 * layout.max_preferences_per_gender,
     )
 
     return VoterChoice(
@@ -341,7 +342,7 @@ def ballot_dimensions(
         + (proofs.r2_proof,)
         + proofs.r3_proofs
         + (proofs.r4_proof,)
-        + proofs.r5_proofs
+        + (proofs.r5_proof,)
     )
 
     ciphertexts = (
@@ -354,7 +355,6 @@ def ballot_dimensions(
         ciphertexts=ciphertexts,
         r1_proofs=len(proofs.r1_proofs),
         r3_proofs=len(proofs.r3_proofs),
-        r5_proofs=len(proofs.r5_proofs),
         proofs=len(all_proofs),
         branches=sum(
             len(proof.branches)
@@ -536,6 +536,10 @@ def measure_ballot(
         verify_membership_checks=membership_checks,
         encrypt_seconds=statistics.median(encrypt_times),
         verify_seconds=statistics.median(verify_times),
+        encrypt_seconds_min=min(encrypt_times),
+        encrypt_seconds_max=max(encrypt_times),
+        verify_seconds_min=min(verify_times),
+        verify_seconds_max=max(verify_times),
     )
 
 
@@ -793,7 +797,10 @@ def parse_arguments() -> argparse.Namespace:
         "--ripetizioni",
         type=int,
         default=3,
-        help="ripetizioni di ogni misura, si usa la mediana (default 3)",
+        help=(
+            "ripetizioni di ogni misura: si stampa la mediana, il CSV "
+            "contiene anche minimo e massimo (default 3)"
+        ),
     )
 
     parser.add_argument(
@@ -984,6 +991,22 @@ def main() -> None:
             f"  {label}  {format_bytes(size):<12} "
             f"{format_seconds(item.encrypt_seconds):<12} "
             f"{format_seconds(item.verify_seconds)}"
+        )
+
+    print(
+        f"\n  Tempi: mediana di {arguments.ripetizioni} ripetizioni. "
+        "Tra minimo e massimo:"
+    )
+
+    for name in ("4096", "demo"):
+        item = reference[name]
+
+        print(
+            f"  {name:<5} cifratura "
+            f"{format_seconds(item.encrypt_seconds_min)}"
+            f"-{format_seconds(item.encrypt_seconds_max)}, verifica "
+            f"{format_seconds(item.verify_seconds_min)}"
+            f"-{format_seconds(item.verify_seconds_max)}"
         )
 
     # 3. Al variare di liste e candidati

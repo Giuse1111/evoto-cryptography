@@ -1,6 +1,6 @@
 # eVoto — Specifica tecnica condivisa F1
 
-**Versione:** 0.9  
+**Versione:** 0.10  
 **Progetto:** Voto elettronico verificabile per elezioni politiche  
 **Corso:** Crittografia — LM Sicurezza Informatica, Università degli Studi di Milano  
 **Componenti del gruppo:**
@@ -625,17 +625,23 @@ Si utilizza la prova OR generica con quattro valori ammessi.
 
 ---
 
-## R5 — Vincolo di genere
+## R5 — Regola di genere
 
-Nel modello iniziale:
+Aggiornamento v0.10. La regola segue la legge 9 ottobre 2026, n. 180 (G.U. Serie Generale n. 235 del 9 ottobre 2026), art. 1, comma 4, che sostituisce l'art. 4, comma 2, del d.P.R. 361/1957: se le preferenze sono più di una devono riguardare candidati di sesso diverso, altrimenti sono annullate la seconda e la terza nell'ordine di lista.
+
+L'annullamento segue l'ordine di lista, che è pubblico, quindi dipende solo dall'insieme delle caselle segnate e non dall'ordine in cui l'elettore le segna. Per questo lo fa il dispositivo prima di cifrare, come farebbe lo scrutatore su una scheda di carta (`apply_gender_rule`, sezione 43): se le preferenze sono almeno due e tutte dello stesso genere, resta solo la prima in ordine di lista.
+
+La prova R5 dimostra che la scheda cifrata rispetta la regola. Chiamiamo `A` il genere che viene prima in ordine alfabetico (`"F"`) e `B` l'altro (`"M"`):
 
 ```text
-Σ p_c ∈ {0, 1, 2}
+Σ_{c ∈ A} p_c - Σ_{c ∈ B} p_c + 1 ∈ {0, 1, 2}
 ```
 
-per i candidati appartenenti allo stesso genere.
+Il cifrato derivato è il prodotto dei cifrati di `A`, diviso il prodotto di quelli di `B`, moltiplicato per `(1, g)`, cioè per la cifratura di `1` con nonce `0`; il suo nonce è la differenza delle somme dei nonce. Si usa una sola prova OR a tre rami.
 
-I dettagli del vincolo devono rimanere parametrizzabili tramite configurazione dell'elezione.
+Con al massimo tre preferenze la condizione equivale alla regola di legge: le preferenze dei due generi differiscono al più di 1 se e solo se ce n'è al massimo una oppure ci sono entrambi i generi. Per questo `max_preferences` non può superare 3 e i generi sono al massimo due (sezione 42). Se la scheda ha un solo genere, `B` è vuoto e R5 ammette al massimo una preferenza.
+
+Fino alla v0.9 R5 limitava a `max_preferences_per_gender` le preferenze di ciascun genere, con una prova per genere: ammetteva quindi due preferenze dello stesso genere, che la legge riduce a una.
 
 ---
 
@@ -1081,6 +1087,10 @@ Nel test incrociato gli interi vanno quindi passati a ElectionGuard come `Elemen
 
 Verificare la compatibilità o comunque la correttezza incrociata delle prove 0/1 secondo le convenzioni fissate.
 
+Dalla v0.10 la prova 0/1 generata da ElectionGuard viene controllata sia dalla libreria (`evoto.prove.verify_value_in_set`) sia dal verificatore indipendente (`verifica.verify_value_set_proof`), che non importa `evoto`; le altre direzioni confrontano ElectionGuard con la libreria. T3 non dipende da come si calcola `Q`: il contesto viene passato a ElectionGuard come semplice input.
+
+I test usano il clone di `electionguard-python` al commit `a975384` (tag `v1.4.0` più 7 commit; la libreria implementa la specifica 0.95), con un ambiente Python 3.12 separato in `riferimento/.venv` (comandi nel README). Senza il clone i test vengono saltati.
+
 ---
 
 ## T4 — Elezione completa
@@ -1431,18 +1441,19 @@ k = quorum
 e = identificativo intero dell'elezione
 ```
 
-Nei test si usa `e = 1`.
+Nei test sui singoli moduli e nell'esempio della sezione 38, che non hanno una configurazione, si usa `e = 1`.
 
-Decisione v0.3: `e` coincide con il campo `election_id` della configurazione
-ufficiale dell'elezione (sezione 42).
+Decisione v0.10: per un'elezione politica `e` è l'impronta della configurazione ufficiale (sezione 42), come l'hash del manifest nel contesto di ElectionGuard 1.4:
 
-Di conseguenza:
+```text
+e = SHA-256(JSON canonico della configurazione) mod q
+```
 
-Q = H(p, q, g, n, k, election_id)
+Il JSON canonico è quello della configurazione pubblicata nel registro (`election_config_to_data`, già normalizzata), scritto con le chiavi in ordine alfabetico, senza spazi (separatori `,` e `:`) e con i caratteri non ASCII lasciati come sono, codificato in UTF-8 (`config_fingerprint`). Il verificatore la ricalcola per conto suo dalla configurazione del registro e controlla che coincida con `e` (V2).
 
-Non viene calcolato un secondo hash della configurazione per ricavare `e`.
-La configurazione completa viene comunque pubblicata nel registro e verificata
-dal verificatore indipendente.
+Così liste, candidati, soglie, premio e limite delle preferenze sono legati a tutte le prove: cambiando la configurazione dopo la cerimonia cambia `e`, quindi `Q`, e le prove dei garanti, delle schede e delle share non tornano più. L'impronta non dice se la configurazione è quella giusta: chi controlla l'elezione deve confrontarla con quella pubblicata dall'autorità prima del voto.
+
+Fino alla v0.9 `e` coincideva con il campo `election_id`, e la configurazione era controllata per coerenza ma non legata alle prove: soglie e premio entravano solo in V8, quindi chi pubblicava il registro poteva cambiarli e ricalcolare i seggi senza che il verificatore se ne accorgesse. `election_id` resta nella configurazione come identificativo per le persone.
 
 ## Hash esteso Q_bar
 
@@ -1723,7 +1734,7 @@ class BallotProofs:
     r2_proof: ValueSetProof
     r3_proofs: tuple[ValueSetProof, ...]
     r4_proof: ValueSetProof
-    r5_proofs: tuple[ValueSetProof, ...]
+    r5_proof: ValueSetProof      # una sola prova dalla v0.10
 ```
 
 `BallotLayout` viene dalla configurazione ufficiale (sezione 42): i metadati delle preferenze non sono mai scelti dal votante.
@@ -1748,20 +1759,15 @@ Tutte le prove sono prove OR (sezione 16) con contesto `Q_bar`:
 | `r2_proof` | prodotto dei cifrati delle liste e della scheda bianca | `(1,)` |
 | `r3_proofs[k]` | `lista[metadata[k].list_index] / preferenza[k]` | `(0, 1)` |
 | `r4_proof` | prodotto di tutte le preferenze | `(0, ..., max_preferences)` |
-| `r5_proofs[g]` | prodotto delle preferenze del gruppo di genere `g` | `(0, ..., max_preferences_per_gender)` |
+| `r5_proof` | prodotto delle preferenze del genere `A` diviso quello del genere `B`, per `(1, g)` | `(0, 1, 2)` |
 
-I gruppi di genere seguono l'ordine della prima comparsa di ciascun genere nel layout.
+I due generi sono ordinati alfabeticamente: `A` è il primo, `B` il secondo (`gender_groups`, sezione 17).
 
 La randomness di un cifrato derivato è la somma (o la differenza, per R3) dei nonce modulo `q` e può valere `0` (sezione 16).
 
 ## Limiti delle preferenze
 
-`BallotLayout` contiene i campi pubblici:
-
-- `max_preferences`;
-- `max_preferences_per_gender`.
-
-I valori sono ricavati dalla configurazione ufficiale dell'elezione tramite `build_ballot_layout`.
+`BallotLayout` contiene il campo pubblico `max_preferences`, ricavato dalla configurazione ufficiale dell'elezione tramite `build_ballot_layout`. Dalla v0.10 vale al massimo 3 e i generi delle caselle sono al massimo due, perché R5 coincide con la regola di legge solo in questi casi (sezione 17).
 
 R4 costruisce dinamicamente l'insieme dei valori ammessi:
 
@@ -1769,9 +1775,9 @@ R4 costruisce dinamicamente l'insieme dei valori ammessi:
 (0, ..., max_preferences)
 ```
 
-R5 usa allo stesso modo `(0, ..., max_preferences_per_gender)` per ogni genere.
+R5 non ha parametri: i valori ammessi sono sempre `(0, 1, 2)`.
 
-Una circoscrizione in cui le liste hanno solo il capolista non ha caselle di preferenza: R4 lavora allora sul prodotto vuoto, cioè `Enc(0) = (1, 1)` con nonce `0`, e le prove R5 non ci sono.
+Una circoscrizione in cui le liste hanno solo il capolista non ha caselle di preferenza: R4 e R5 lavorano allora sul prodotto vuoto, cioè `Enc(0) = (1, 1)` con nonce `0`; per R5 il cifrato derivato è `(1, g)`, la cifratura di `1`.
 
 ## Controlli di appartenenza al sottogruppo (v0.7)
 
@@ -1783,7 +1789,7 @@ Ogni valore ricevuto deve stare nel sottogruppo di ordine `q` (`x^q = 1 mod p`),
 
 `verify_ballot` restituisce `False`, senza sollevare eccezioni, anche per una scheda malformata, e si ferma alla prima regola che fallisce.
 
-Per la scheda di riferimento (91 cifrati, 175 prove) i controlli `x^q = 1` della verifica passano da 1231 a 183 (sezione 50).
+Per la scheda di riferimento (91 cifrati, 175 prove fino alla v0.9, 174 dalla v0.10) i controlli `x^q = 1` della verifica passano da 1231 a 183 (sezione 50).
 
 ---
 
@@ -1804,7 +1810,7 @@ Controlli già implementati:
 
 ```text
 V1 parametri del gruppo e chiave pubblica
-V2 prove di Schnorr sugli impegni e chiave pubblica congiunta
+V2 impronta della configurazione (v0.10), Q, prove di Schnorr sugli impegni e chiave pubblica congiunta
 V3 prove OR e regole R2-R5 sui cifrati derivati
 V6 prove Chaum-Pedersen delle share, chiavi di verifica V_l, Lagrange, combinazione
 ```
@@ -1824,9 +1830,14 @@ Regole aggiunte nella revisione (v0.7):
 - V1 rifiuta `K = 1`, che corrisponderebbe alla chiave segreta `0`;
 - V3 controlla che ogni scheda abbia un cifrato per ogni lista della configurazione, oltre a quelli già controllati per la bianca e per le caselle di preferenza della sua circoscrizione;
 - V3 controlla l'appartenenza al sottogruppo di `K` una volta e dei cifrati di ogni scheda una volta, come `verify_ballot` (sezione 40);
-- R4 e R5 confrontano il numero di rami con il limite prima di costruire l'insieme dei valori ammessi;
+- R4 confronta il numero di rami con il limite prima di costruire l'insieme dei valori ammessi; R5 ha sempre tre rami (v0.10);
 - ogni controllo viene eseguito separatamente e qualunque eccezione su dati malformati vale come controllo fallito; il parser rifiuta anche JSON annidato oltre il limite di ricorsione;
 - V7 viene eseguito solo se V6 è superato: combina le share con Lagrange, che ha senso solo per share valide.
+
+Regole aggiunte nella v0.10:
+
+- V2 ricalcola l'impronta della configurazione pubblicata (`configuration_fingerprint`, sezione 35) e controlla che coincida con `e`;
+- V3 rifiuta una configurazione con più di 3 preferenze o una circoscrizione con più di due generi, e verifica R5 come prova unica (sezione 17).
 
 ## Riga di comando
 
@@ -1854,7 +1865,6 @@ Cambiare legge elettorale significa cambiare questo file, non il codice.
   "seats": 2,
   "rules": {
     "max_preferences": 3,
-    "max_preferences_per_gender": 2,
     "list_threshold_percent": 3,
     "coalition_threshold_percent": 10,
     "bonus_threshold_percent": 42,
@@ -1889,10 +1899,11 @@ Regole:
 - ogni circoscrizione ha candidati per tutte e sole le liste;
 - il primo candidato di ogni lista è il capolista bloccato, senza casella di preferenza; ogni altro candidato ha una casella;
 - le percentuali sono convertite in frazioni esatte (`2.5` diventa `1/40`), senza arrotondamenti in virgola mobile;
-- `election_id` è l'identificativo `e` del contesto `Q` (sezione 35);
+- `election_id` identifica l'elezione per le persone; nel contesto `Q` entra invece l'impronta dell'intera configurazione (`config_fingerprint`, sezione 35, v0.10);
 - ogni lista deve avere in tutto, sommando le circoscrizioni e contando il capolista, almeno tanti candidati quanti sono i seggi (v0.7): così ogni seggio vinto ha un candidato da eleggere e lo scrutinio non può fermarsi (sezione 46);
 - il genere dei candidati viene normalizzato (spazi tolti, maiuscolo), quindi `"f"` e `"F "` sono lo stesso genere per R5;
-- `max_preferences_per_gender` non può superare `max_preferences`.
+- i generi sono al massimo due e `max_preferences` è al massimo 3, perché R5 coincide con la regola di legge solo in questi casi (sezione 17, v0.10);
+- il campo `max_preferences_per_gender` non esiste più dalla v0.10: un file che lo contiene viene rifiutato, così non si crede che quel limite venga applicato.
 
 ## Caselle di preferenza e layout
 
@@ -1900,16 +1911,13 @@ L'ordine delle caselle di preferenza di una circoscrizione è: lista dopo lista,
 
 `build_ballot_layout` costruisce il `BallotLayout` della circoscrizione con lo stesso ordine e il genere di ogni candidato.
 
-`build_ballot_layout` copia nel `BallotLayout` i valori
-`max_preferences` e `max_preferences_per_gender` definiti nella configurazione.
-
-Le prove R4 e R5 e il verificatore indipendente usano quindi direttamente i limiti configurati, senza valori fissi nel codice.
+`build_ballot_layout` copia nel `BallotLayout` il valore `max_preferences` definito nella configurazione: la prova R4 e il verificatore indipendente usano direttamente il limite configurato, senza valori fissi nel codice. R5 non ha parametri.
 
 ## Configurazione di esempio
 
 Tre circoscrizioni (Nord, Centro, Sud), 15 seggi, otto liste: la Coalizione Alfa (liste A, B, D), la Coalizione Beta (liste E, F, G) e due liste singole (C, H). Ogni lista ha il capolista e quattro candidati in ogni circoscrizione, cioè 15 candidati in tutto, quanti i seggi. Fino alla v0.6 i seggi erano 30: una lista che vinceva più di 15 seggi (per esempio con il premio) non aveva abbastanza candidati e lo scrutinio si fermava. Nella circoscrizione Nord le liste A, B e C riprendono l'esempio della proposta di progetto. Nomi e liste sono inventati.
 
-Le soglie e il premio sono valori illustrativi, da allineare al testo definitivo della legge.
+La soglia del 3% per le liste, il premio a chi supera il 42% e le tre preferenze con la regola di genere vengono dalla legge 9 ottobre 2026, n. 180. Il modello semplifica il premio (il vincitore sale al 55% dei seggi, mentre la legge assegna 70 seggi aggiuntivi entro un tetto di 220) e usa quattro candidati con preferenza per lista invece dei sei della legge. La soglia del 10% per le coalizioni non compare nel testo della legge 180, che modifica il d.P.R. 361/1957: nel modello è un parametro della configurazione.
 
 ---
 
@@ -1931,9 +1939,12 @@ Il dispositivo traduce la scelta nei bit delle caselle:
 - lista segnata: bit 1 sulla lista, 0 sulle altre e sulla scheda bianca;
 - nessuna lista ma preferenze tutte della stessa lista: la lista viene segnata, perché una preferenza vale anche per la sua lista;
 - nessuna lista e nessuna preferenza: scheda bianca;
-- nessuna lista e preferenze in liste diverse: scelta rifiutata.
+- nessuna lista e preferenze in liste diverse: scelta rifiutata;
+- preferenze tutte dello stesso genere (almeno due): resta solo la prima in ordine di lista, le altre sono annullate come prevede la legge (`apply_gender_rule`, sezione 17, v0.10). La cabina avvisa l'elettore prima del deposito.
 
-Il dispositivo controlla solo la forma della scelta. Il rispetto di R3, R4 ed R5 è garantito dalle prove: una scelta che le viola non produce una scheda (`prove_value_in_set` fallisce).
+Per il resto il dispositivo controlla solo la forma della scelta. Il rispetto di R3, R4 ed R5 è garantito dalle prove: una scelta che le viola non produce una scheda (`prove_value_in_set` fallisce). Un dispositivo scorretto che non applica l'annullamento non ottiene la prova R5.
+
+La legge annulla anche la preferenza data a un candidato di un'altra lista; il nostro dispositivo invece non accetta quella scelta (la prova R3 non si costruisce). È una semplificazione dichiarata.
 
 Ogni casella viene cifrata con un nonce fresco tra `1` e `q - 1`.
 
@@ -2137,7 +2148,7 @@ Il formato JSON del registro e il suo parser nel verificatore sono di Persona A 
 |---|---|---|
 | configurazione dell'elezione (sezione 42) | `config/*.json` | base di tutto |
 | `p`, `q`, `g` | `GroupParameters` | V1 |
-| `n`, `quorum`, `e`, `Q`, `Q_bar` | cerimonia | V1, V2 |
+| `n`, `quorum`, `e` (impronta della configurazione, v0.10), `Q`, `Q_bar` | cerimonia | V1, V2 |
 | `GuardianRecord` di ogni garante: indice, impegni, prove di Schnorr `(h, c, z)` | `KeyCeremony.records` | V2 |
 | chiave pubblica `K` | `KeyCeremony.joint_public_key` | V1, V2 |
 | bacheca: `extended_base_hash`, `genesis_code`, righe complete (sezione 44) | `BulletinBoard` | V3, V4 |
@@ -2156,7 +2167,7 @@ lista degli aventi diritto (VoterRoll)
 
 ---
 
-# 48. Stato del progetto (v0.9)
+# 48. Stato del progetto (v0.10)
 
 ```text
 F0 ambiente e repository                          completata
@@ -2185,7 +2196,7 @@ Il verificatore indipendente:
 - non importa alcun modulo `evoto`;
 - legge il registro pubblico JSON;
 - esegue autonomamente i controlli V1-V8;
-- ricostruisce `Q`, `Q_bar`, la chiave pubblica congiunta `K` e le verification key dei garanti;
+- ricalcola l'impronta della configurazione e ricostruisce `Q`, `Q_bar`, la chiave pubblica congiunta `K` e le verification key dei garanti;
 - verifica le prove di Schnorr dei garanti;
 - verifica le prove R1-R5 di ogni scheda;
 - verifica la catena della bacheca, le sequenze e i tracking code;
@@ -2200,9 +2211,9 @@ Il verificatore indipendente:
 - confronta voti, seggi ed eletti con il risultato pubblicato;
 - restituisce gli esiti separati `V1`-`V8` e l'esito complessivo `overall`.
 
-L'esperimento E3 è coperto da test di manomissione mirati su prove dei garanti, prove delle schede, tracking code, tally cifrati, prove di decifratura, totali in chiaro, witness delle schede `SPOILED` e risultato dello scrutinio.
+L'esperimento E3 è coperto da test di manomissione mirati su prove dei garanti, prove delle schede, tracking code, tally cifrati, prove di decifratura, totali in chiaro, witness delle schede `SPOILED`, risultato dello scrutinio e, dalla v0.10, configurazione riscritta insieme ai seggi (fallisce V2; se si ricalcolano anche `e`, `Q` e `Q_bar` falliscono V2, V3, V4 e V6).
 
-L'esperimento E4 è coperto dai test della scheda e del verificatore: configurazioni che violano i vincoli R3-R5 non possono produrre una scheda valida e prove manomesse vengono rifiutate dal verificatore indipendente.
+L'esperimento E4 è coperto dai test della scheda e del verificatore: configurazioni che violano i vincoli R3-R5 non possono produrre una scheda valida e prove manomesse vengono rifiutate dal verificatore indipendente. Per R5 il dispositivo onesto annulla le preferenze in eccesso; una scheda con preferenze tutte dello stesso genere si ottiene solo saltando l'annullamento, e allora la prova non si costruisce.
 
 In `gruppo.py` è inoltre disponibile `DEMO_PARAMS`, un gruppo MODP con `p` da 2048 bit e `q` da 256 bit. L'intero protocollo, dalla simulazione alla verifica indipendente V1-V8 del registro pubblico, è testato end-to-end anche con questi parametri.
 
@@ -2220,7 +2231,7 @@ Persona B:
 - tesina (F8): capitoli 4 (protocollo ed esempio a numeri piccoli), 6 (implementazione) e 8 (esperimenti E1-E5);
 - prova della demo all'esame (F9) con la cabina.
 
-Gli esperimenti E2 ed E5 (sezione 50), il notebook didattico (sezione 51) e la cabina elettorale web (sezione 52) di Persona B sono completati. La revisione completa del progetto è descritta nella sezione 53; dalla v0.8 la cabina è un sito guidato, con simulazioni configurabili dal browser, e dalla v0.9 comincia sempre dalla pagina «Prepara» (sezione 52).
+Gli esperimenti E2 ed E5 (sezione 50), il notebook didattico (sezione 51) e la cabina elettorale web (sezione 52) di Persona B sono completati. La revisione completa del progetto è descritta nella sezione 53; dalla v0.8 la cabina è un sito guidato, con simulazioni configurabili dal browser, e dalla v0.9 comincia sempre dalla pagina «Prepara» (sezione 52). La v0.10 lega la configurazione al contesto `Q` (sezione 35) e porta la regola di genere a quella della legge (sezione 17).
 
 ---
 
@@ -2237,6 +2248,7 @@ Gli esperimenti E2 ed E5 (sezione 50), il notebook didattico (sezione 51) e la c
 | 0.7 | Revisione completa (sezione 53): vincolo candidati/seggi ed esempio a 15 seggi; controlli di appartenenza una sola volta per scheda; V3 controlla il numero di liste; verificatore robusto ai registri malformati; comando `python -m verifica`; quorum della cerimonia e K diverso da 1 |
 | 0.8 | Cabina guidata (sezione 52): panoramica per chi usa la demo, menu a passi, pagina «Prepara» con simulazioni configurabili e preparazione in background, spoglio e risultati in un'unica pagina, ricevuta e sfida idempotenti, registro non scrivibile segnalato |
 | 0.9 | Cabina (sezione 52): si comincia sempre da «Prepara», dove la simulazione preparata all'avvio si conferma con un clic o si sostituisce, e fino ad allora le pagine del voto sono bloccate; carte d'identità fittizie al posto dei codici `NORD-01`; pagina di conferma ridotta a deposito o sfida, con l'impronta nei dettagli tecnici |
+| 0.10 | Impronta della configurazione come `e` nel contesto `Q`, ricalcolata da V2 (sezione 35); regola di genere della legge 180/2026: annullamento nel dispositivo e R5 come prova unica a tre rami, senza `max_preferences_per_gender` (sezioni 17, 40, 42, 43); manomissione «configurazione» nella cabina e nei test E3; T3 anche sul verificatore indipendente (sezione 26); E5 con minimo e massimo dei tempi (sezione 50) |
 
 ---
 
@@ -2291,15 +2303,15 @@ La proprietà è informativa per Shamir. Con gli impegni di Feldman la chiave `K
 
 ## E5 — Costi di una scheda
 
-Scheda con `L` liste, `c` candidati per lista oltre al capolista, `G` generi, al massimo `P` preferenze e `P_g` per genere:
+Scheda con `L` liste, `c` candidati per lista oltre al capolista e al massimo `P` preferenze:
 
 ```text
 cifrati   m     = L + 1 + L·c
-prove           = m (R1) + 1 (R2) + L·c (R3) + 1 (R4) + G (R5)
-rami            = 2m + 1 + 2·L·c + (P + 1) + G·(P_g + 1)
+prove           = m (R1) + 1 (R2) + L·c (R3) + 1 (R4) + 1 (R5)
+rami            = 2m + 1 + 2·L·c + (P + 1) + 3
 ```
 
-Scheda di riferimento della proposta di progetto (`L = 10`, `c = 8`, `G = 2`, `P = 3`, `P_g = 2`): 91 cifrati, 175 prove, `182 + 1 + 160 + 4 + 6 = 353` rami. Le misure contano cifrati, prove e rami sulla scheda vera prodotta da `prepare_ballot`.
+Scheda di riferimento della proposta di progetto (`L = 10`, `c = 8`, `P = 3`): 91 cifrati, 174 prove, `182 + 1 + 160 + 4 + 3 = 350` rami. Fino alla v0.9 R5 aveva una prova per genere (`G = 2`) con `P_g + 1 = 3` rami ciascuna: 175 prove e 353 rami. Le misure contano cifrati, prove e rami sulla scheda vera prodotta da `prepare_ballot`.
 
 Dimensione in byte, con `e` byte per un elemento del gruppo (quelli di `p`) e `s` byte per una sfida o una risposta (quelli di `q`):
 
@@ -2310,7 +2322,7 @@ forma compatta   = 2m·e + 2·rami·s
 
 Il registro pubblica le prove con gli impegni, come ElectionGuard. Nella forma compatta gli impegni non vengono trasmessi, perché si ricalcolano dalle equazioni di verifica a partire da sfida e risposta: è una stima della dimensione, il formato non è implementato.
 
-Tempi: mediana di più esecuzioni di `prepare_ballot` (cifratura e prove) e `verify_ballot` (controllo R1-R5). Le esponenziazioni modulari si contano sostituendo temporaneamente `mod_pow` nei moduli `gruppo`, `elgamal`, `prove`, `garanti` e `decifratura` (`unittest.mock.patch`); quelle con esponente `q` sono controlli di appartenenza al sottogruppo. Il conteggio comprende anche le `g^v` con `v` piccolo (al massimo `P`), di costo trascurabile. Per il confronto con Python puro la stessa sostituzione usa `pow()` al posto di `gmpy2.powmod`.
+Tempi: mediana di più esecuzioni (`--ripetizioni`, default 3) di `prepare_ballot` (cifratura e prove) e `verify_ballot` (controllo R1-R5); dalla v0.10 il CSV contiene anche il minimo e il massimo. Le esponenziazioni modulari si contano sostituendo temporaneamente `mod_pow` nei moduli `gruppo`, `elgamal`, `prove`, `garanti` e `decifratura` (`unittest.mock.patch`); quelle con esponente `q` sono controlli di appartenenza al sottogruppo. Il conteggio comprende anche le `g^v` con `v` piccolo (al massimo `P`), di costo trascurabile. Per il confronto con Python puro la stessa sostituzione usa `pow()` al posto di `gmpy2.powmod`.
 
 Il gruppo da 4096 bit è quello standard di ElectionGuard (`q = 2^256 - 189`), definito in `esperimenti/e5_costi.py` solo per le misure.
 
@@ -2328,14 +2340,14 @@ Risultati indicativi sulla scheda di riferimento, misurati su un portatile (su u
 
 | Configurazione | Dimensione | Cifratura | Verifica |
 |---|---|---|---|
-| 4096 bit, con impegni, Python puro | 477 KB | 27 s | 23 s |
+| 4096 bit, con impegni, Python puro | 474 KB | 27 s | 23 s |
 | 4096 bit, forma compatta, `gmpy2` | 116 KB | 1,4 s | 1,2 s |
 | 2048/256 bit, forma compatta, `gmpy2` | 69 KB | 0,4 s | 0,4 s |
-| 2048/256 bit, con impegni, `gmpy2` | 250 KB | 0,4 s | 0,4 s |
+| 2048/256 bit, con impegni, `gmpy2` | 248 KB | 0,4 s | 0,4 s |
 
-Cifrare la scheda richiede 2129 esponenziazioni, verificarla 1948 (2996 prima della revisione v0.7). Con `N = 1.000.000` e il gruppo da 2048 bit: bacheca di circa 70 GB in forma compatta, circa 100 ore di verifica su un core (165 prima della revisione v0.7), circa 45 minuti di conteggio omomorfico, pochi secondi di decifratura. `gmpy2` è da 8 a 20 volte più veloce di `pow()`, a seconda della macchina.
+Cifrare la scheda richiede 2114 esponenziazioni, verificarla 1933, cioè 5 per ciascuno dei 350 rami più 183 controlli di appartenenza (fino alla v0.9 erano 2129 e 1948; 2996 per la verifica prima della revisione v0.7). Con `N = 1.000.000` e il gruppo da 2048 bit: bacheca di circa 70 GB in forma compatta, circa 100 ore di verifica su un core (165 prima della revisione v0.7), circa 45 minuti di conteggio omomorfico, pochi secondi di decifratura. `gmpy2` è da 8 a 20 volte più veloce di `pow()`, a seconda della macchina.
 
-Controlli di appartenenza. Fino alla v0.6, delle 2996 esponenziazioni della verifica 1231 erano controlli `x^q = 1`: 706 sugli impegni dei rami, 350 sulle componenti dei cifrati (182 originali e 168 derivati per R2-R5) e 175 sulla chiave `K`, una volta per prova. Il controllo degli impegni è implicato dalle equazioni di verifica, i cifrati derivati sono prodotti di elementi già controllati e `K` basta controllarla una volta. Dalla v0.7 (sezione 40) restano 183 controlli, `K` e le 182 componenti dei cifrati, e la verifica scende a 1948 esponenziazioni, circa un terzo in meno; lo stesso vale per V3 nel verificatore indipendente.
+Controlli di appartenenza. Fino alla v0.6, delle 2996 esponenziazioni della verifica 1231 erano controlli `x^q = 1`: 706 sugli impegni dei rami, 350 sulle componenti dei cifrati (182 originali e 168 derivati per R2-R5) e 175 sulla chiave `K`, una volta per prova. Il controllo degli impegni è implicato dalle equazioni di verifica, i cifrati derivati sono prodotti di elementi già controllati e `K` basta controllarla una volta. Dalla v0.7 (sezione 40) restano 183 controlli, `K` e le 182 componenti dei cifrati, e la verifica scende a 1948 esponenziazioni, circa un terzo in meno (1933 dalla v0.10, con R5 a una sola prova); lo stesso vale per V3 nel verificatore indipendente.
 
 ---
 
@@ -2393,13 +2405,13 @@ Default: gruppo `DEMO_PARAMS` (modalità realistica), 10 elettori simulati per c
 
 ## Stato della sessione
 
-All'avvio `ElectionSession` esegue `run_key_ceremony`, costruisce i layout delle circoscrizioni, crea la bacheca e la lista degli aventi diritto con le carte d'identità fittizie degli elettori che votano dal browser (v0.9): dieci per circoscrizione, numeri nel formato della carta d'identità elettronica (due lettere, cinque cifre, due lettere, senza I, O e Q) tutti diversi e generati da `random.Random("carte-<election_id>")`, quindi sempre uguali per la stessa elezione e senza legame con documenti reali. Si accettano anche minuscoli, con spazi o trattini (`normalize_card`). In un sistema reale il numero da solo non basterebbe: l'elettore accederebbe con SPID o con la CIE e il suo PIN. `prefill` aggiunge agli aventi diritto gli elettori simulati, che votano con `random_choice` e lo stesso percorso del browser; i pesi delle liste, le schede bianche e la probabilità di sprecare prima una scheda sono parametri. `prefill` misura anche il tempo medio di una scheda (`seconds_per_ballot`), usato per stimare le simulazioni successive.
+All'avvio `ElectionSession` esegue `run_key_ceremony` con l'impronta della configurazione come `e` (v0.10), costruisce i layout delle circoscrizioni, crea la bacheca e la lista degli aventi diritto con le carte d'identità fittizie degli elettori che votano dal browser (v0.9): dieci per circoscrizione, numeri nel formato della carta d'identità elettronica (due lettere, cinque cifre, due lettere, senza I, O e Q) tutti diversi e generati da `random.Random("carte-<election_id>")`, quindi sempre uguali per la stessa elezione e senza legame con documenti reali. Si accettano anche minuscoli, con spazi o trattini (`normalize_card`). In un sistema reale il numero da solo non basterebbe: l'elettore accederebbe con SPID o con la CIE e il suo PIN. `prefill` aggiunge agli aventi diritto gli elettori simulati, che votano con `random_choice` e lo stesso percorso del browser; i pesi delle liste, le schede bianche e la probabilità di sprecare prima una scheda sono parametri. `prefill` misura anche il tempo medio di una scheda (`seconds_per_ballot`), usato per stimare le simulazioni successive.
 
 Lo stato cambia nel tempo, quindi la sessione è una classe; le strutture di `evoto` restano immutabili e vengono sostituite a ogni passo. Un `RLock` protegge lo stato, perché il server serve più richieste insieme. Le share segrete dei garanti simulati restano in `KeyCeremony.secret_shares` e non vengono mai pubblicate.
 
 | Operazione | Funzioni della libreria | Note |
 |---|---|---|
-| `prepare(voter, choice)` | `prepare_ballot` | la scheda cifrata attende la decisione dell'elettore con un token casuale; se la scelta viola R3-R5 le prove non si costruiscono e il messaggio indica la regola |
+| `prepare(voter, choice)` | `prepare_ballot` | la scheda cifrata attende la decisione dell'elettore con un token casuale; se la scelta viola R3 o R4 le prove non si costruiscono e il messaggio indica la regola; le preferenze annullate dalla regola di genere sono indicate nella pagina di conferma (v0.10) |
 | `cast(token)`, `receipt(token)` | `cast_voter_ballot` | la bacheca verifica le prove; l'elettore riceve il codice di tracciamento. Un secondo deposito con lo stesso token restituisce la stessa ricevuta (v0.8) |
 | `spoil(token)`, `spoil_report(token)` | `spoil_ballot`, `verify_spoiled_ballot` | sfida di Benaloh: voti e nonce pubblicati, scheda non contata, l'elettore vota di nuovo. La sfida ripetuta restituisce lo stesso esito; una scheda di un elettore che ha già votato non si può sfidare (v0.8) |
 | `find_entries(text)` | `BulletinBoard.entries` | ricerca per prime cifre del codice (almeno 4, o tutto il codice nel gruppo didattico); spazi, trattini e puntini vengono ignorati |
@@ -2460,6 +2472,7 @@ Le manomissioni modificano solo il JSON pubblicato, mai lo stato dell'elezione:
 | `codice` | `tracking_code + 1` nella prima riga della bacheca | V4 |
 | `share` | `partial_decryption · g` nella prima share del primo totale | V6, V7 |
 | `garante` | `response + 1` nella prima prova di Schnorr del garante 1 | V2 |
+| `configurazione` | soglia del premio al 50% e scrutinio rifatto con la nuova regola (v0.10) | V2 |
 
 ## Interfaccia
 
@@ -2467,7 +2480,7 @@ La pagina di conferma riepiloga la scelta e offre solo le due azioni, deposito o
 
 Il menu a passi (Prepara, Vota, Bacheca, Spoglio e risultati, Verifica) ha una voce per pagina: segna con una spunta i passi fatti e disattiva quelli non ancora disponibili (tutto tranne «Prepara» finché la simulazione non è stata scelta o mentre si prepara, la verifica prima dello spoglio). In fondo a ogni pagina un riquadro indica il passo successivo. Ogni controllo del verificatore è descritto anche a parole.
 
-Il JavaScript serve solo alla comodità: nella scheda una preferenza segna la sua lista, le preferenze di altre liste vengono tolte, i limiti R4 e R5 vengono segnalati; i moduli lenti disattivano i pulsanti dopo il primo clic e mostrano i secondi trascorsi; la pagina «Prepara» aggiorna la stima e la pagina di avanzamento legge `/stato` ogni secondo. L'opzione «dispositivo scorretto» spegne i controlli della scheda: la scheda viene rifiutata comunque, perché le prove non si costruiscono (E4).
+Il JavaScript serve solo alla comodità: nella scheda una preferenza segna la sua lista, le preferenze di altre liste vengono tolte, il limite R4 viene segnalato e, se le preferenze sono tutte dello stesso genere, un avviso dice che varrà solo la prima in ordine di lista (v0.10); i moduli lenti disattivano i pulsanti dopo il primo clic e mostrano i secondi trascorsi; la pagina «Prepara» aggiorna la stima e la pagina di avanzamento legge `/stato` ogni secondo. L'opzione «dispositivo scorretto» spegne i controlli della scheda: la scheda viene rifiutata comunque, perché le prove non si costruiscono (E4).
 
 Nella demo il programma locale fa da dispositivo di voto e da bacheca, quindi riceve la scelta in chiaro e la cifra. In un sistema reale la cifratura avverrebbe sul dispositivo dell'elettore e la bacheca vedrebbe solo la scheda cifrata con le prove.
 
@@ -2493,7 +2506,7 @@ Revisione completa di libreria, verificatore, esperimenti, notebook, cabina e do
 
 Osservazioni rimaste, senza modifiche:
 
-- la configurazione non è legata crittograficamente al contesto `Q` (che contiene solo `e`): il verificatore controlla che sia coerente, non che sia quella ufficiale; per un'elezione reale servirebbe pubblicarne l'impronta;
-- la prova OR non include nell'hash l'insieme dei valori ammessi né `g` e `K`, come deciso nella sezione 36: li fissano il verificatore e `Q_bar`;
+- la configurazione non è legata crittograficamente al contesto `Q` (che contiene solo `e`): il verificatore controlla che sia coerente, non che sia quella ufficiale; per un'elezione reale servirebbe pubblicarne l'impronta. Risolto nella v0.10: `e` è l'impronta della configurazione (sezione 35);
+- la prova OR non include nell'hash l'insieme dei valori ammessi né `g` e `K`, come deciso nella sezione 36: li fissano il verificatore e `Q_bar`. Non è sfruttabile, perché il verificatore ricava da solo dalla configurazione la regola, il cifrato derivato (che è nell'hash), il numero di rami e i valori ammessi; dalla v0.10 anche la configurazione è legata a `Q_bar`;
 - `submit_ballot` non conosce il numero di circoscrizioni: l'indice della circoscrizione è garantito da `cast_voter_ballot`, che lo confronta con la lista degli aventi diritto.
 
