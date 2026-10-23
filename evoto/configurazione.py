@@ -15,10 +15,14 @@ docs/spec_f1.md, sezione 42.
 
 from dataclasses import dataclass
 from fractions import Fraction
+import hashlib
 import json
 from pathlib import Path
 
+from evoto.gruppo import GroupParameters
 from evoto.scheda import (
+    MAX_GENDERS,
+    MAX_PREFERENCES_WITH_GENDER_RULE,
     BallotLayout,
     PreferenceMetadata,
 )
@@ -29,7 +33,7 @@ class Candidate:
     """
     Candidato di una lista in una circoscrizione.
 
-    gender è il genere usato dal vincolo R5.
+    gender è il genere usato dalla regola di genere R5.
     """
 
     name: str
@@ -69,10 +73,12 @@ class ElectoralRules:
 
     Le soglie sono frazioni dei voti validi nazionali:
     per esempio Fraction(3, 100) significa 3%.
+
+    La regola di genere non ha parametri: segue la legge (sezione 17
+    della specifica), quindi non compare qui.
     """
 
     max_preferences: int
-    max_preferences_per_gender: int
     list_threshold: Fraction
     coalition_threshold: Fraction
     bonus_threshold: Fraction
@@ -84,8 +90,10 @@ class ElectionConfig:
     """
     Configurazione completa di un'elezione.
 
-    election_id è l'identificativo e usato nel contesto Q
-    della cerimonia delle chiavi.
+    election_id è un numero che identifica l'elezione per le persone
+    (per esempio genera le carte d'identità fittizie della cabina).
+    Nel contesto Q della cerimonia non entra election_id ma l'impronta
+    dell'intera configurazione, calcolata da config_fingerprint.
     """
 
     name: str
@@ -130,24 +138,35 @@ def _positive_int(value: object, field: str) -> int:
 def _parse_rules(data: dict) -> ElectoralRules:
     """
     Legge la sezione rules del file di configurazione.
+
+    Le preferenze sono al massimo tre, come nella legge: la regola di
+    genere che dimostriamo (R5) coincide con quella della legge solo
+    fino a tre preferenze (sezione 17 della specifica).
     """
 
-    max_preferences = data["max_preferences"]
-    max_per_gender = data["max_preferences_per_gender"]
-
-    for value, field in (
-        (max_preferences, "max_preferences"),
-        (max_per_gender, "max_preferences_per_gender"),
-    ):
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise ValueError(
-                f"Il campo {field} deve essere un intero non negativo."
-            )
-
-    if max_per_gender > max_preferences:
+    if "max_preferences_per_gender" in data:
         raise ValueError(
-            "Il campo max_preferences_per_gender non può superare "
-            "max_preferences."
+            "Il campo max_preferences_per_gender non esiste più: la regola "
+            "di genere segue la legge e non ha parametri (sezione 17 della "
+            "specifica)."
+        )
+
+    max_preferences = data["max_preferences"]
+
+    if (
+        isinstance(max_preferences, bool)
+        or not isinstance(max_preferences, int)
+        or max_preferences < 0
+    ):
+        raise ValueError(
+            "Il campo max_preferences deve essere un intero non negativo."
+        )
+
+    if max_preferences > MAX_PREFERENCES_WITH_GENDER_RULE:
+        raise ValueError(
+            "Il campo max_preferences non può superare "
+            f"{MAX_PREFERENCES_WITH_GENDER_RULE}: la regola di genere è "
+            "definita per al massimo tre preferenze."
         )
 
     bonus_seat_share = _percent(
@@ -160,7 +179,6 @@ def _parse_rules(data: dict) -> ElectoralRules:
 
     return ElectoralRules(
         max_preferences=max_preferences,
-        max_preferences_per_gender=max_per_gender,
         list_threshold=_percent(
             data["list_threshold_percent"],
             "list_threshold_percent",
@@ -182,7 +200,7 @@ def _parse_candidate(data: dict) -> Candidate:
     Legge un candidato e controlla nome e genere.
 
     Il genere viene normalizzato (spazi tolti, maiuscolo): "f" e "F "
-    sono lo stesso genere per il vincolo R5.
+    sono lo stesso genere per la regola R5.
     """
 
     name = data["name"]
@@ -210,7 +228,9 @@ def parse_election_config(data: dict) -> ElectionConfig:
     - ogni lista abbia almeno il capolista in ogni circoscrizione;
     - ogni lista abbia in tutto almeno tanti candidati quanti sono i
       seggi, così lo scrutinio ha sempre qualcuno da eleggere per ogni
-      seggio vinto (sezione 42 della specifica).
+      seggio vinto (sezione 42 della specifica);
+    - i generi dei candidati siano al massimo due, come richiede la
+      regola di genere.
 
     Le coalizioni sono ricavate dal campo coalition di ogni lista,
     nell'ordine in cui compaiono per la prima volta.
@@ -311,6 +331,19 @@ def _parse_election_config(data: dict) -> ElectionConfig:
             )
         )
 
+    genders = {
+        candidate.gender
+        for district in districts
+        for list_candidates in district.candidates
+        for candidate in list_candidates
+    }
+
+    if len(genders) > MAX_GENDERS:
+        raise ValueError(
+            "I candidati devono avere al massimo due generi: la regola di "
+            f"genere confronta due generi, qui ce ne sono {len(genders)}."
+        )
+
     # Una lista non può vincere più seggi dei candidati che presenta:
     # senza questo vincolo lo scrutinio si fermerebbe (sezione 46).
     for list_index, list_name in enumerate(list_names):
@@ -346,6 +379,139 @@ def load_election_config(path: str | Path) -> ElectionConfig:
         data = json.load(config_file)
 
     return parse_election_config(data)
+
+
+def fraction_to_percent(
+    value: Fraction,
+) -> int | float:
+    """
+    Riporta una frazione alla percentuale del file di configurazione.
+    """
+
+    percent = value * 100
+
+    if percent.denominator == 1:
+        return percent.numerator
+
+    return float(percent)
+
+
+def election_config_to_data(
+    config: ElectionConfig,
+) -> dict[str, object]:
+    """
+    Ricostruisce la configurazione nel formato JSON ufficiale.
+
+    È la configurazione che compare nel registro pubblico, già
+    normalizzata (per esempio i generi in maiuscolo), ed è anche quella
+    di cui si calcola l'impronta.
+    """
+
+    coalition_by_list: dict[int, str] = {}
+
+    for coalition in config.coalitions:
+        for list_index in coalition.list_indices:
+            coalition_by_list[list_index] = coalition.name
+
+    lists = [
+        {
+            "name": list_name,
+            "coalition": coalition_by_list.get(list_index),
+        }
+        for list_index, list_name in enumerate(config.list_names)
+    ]
+
+    districts = []
+
+    for district in config.districts:
+        candidates = {
+            config.list_names[list_index]: [
+                {
+                    "name": candidate.name,
+                    "gender": candidate.gender,
+                }
+                for candidate in list_candidates
+            ]
+            for list_index, list_candidates in enumerate(
+                district.candidates
+            )
+        }
+
+        districts.append(
+            {
+                "name": district.name,
+                "candidates": candidates,
+            }
+        )
+
+    return {
+        "name": config.name,
+        "election_id": config.election_id,
+        "seats": config.seats,
+        "rules": {
+            "max_preferences": config.rules.max_preferences,
+            "list_threshold_percent": fraction_to_percent(
+                config.rules.list_threshold
+            ),
+            "coalition_threshold_percent": fraction_to_percent(
+                config.rules.coalition_threshold
+            ),
+            "bonus_threshold_percent": fraction_to_percent(
+                config.rules.bonus_threshold
+            ),
+            "bonus_seats_percent": fraction_to_percent(
+                config.rules.bonus_seat_share
+            ),
+        },
+        "lists": lists,
+        "districts": districts,
+    }
+
+
+def canonical_config_json(
+    data: dict[str, object],
+) -> str:
+    """
+    Scrive la configurazione in forma canonica.
+
+    Chiavi in ordine alfabetico, nessuno spazio, caratteri non ASCII
+    lasciati come sono: due configurazioni uguali danno sempre la
+    stessa stringa, qualunque sia l'ordine delle chiavi nel file.
+    """
+
+    return json.dumps(
+        data,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+
+
+def config_fingerprint(
+    config: ElectionConfig,
+    params: GroupParameters,
+) -> int:
+    """
+    Impronta della configurazione: SHA-256 del suo JSON canonico,
+    ridotto modulo q.
+
+    È il valore e del contesto Q = H(p, q, g, n, k, e) della cerimonia
+    delle chiavi (sezione 35 della specifica), come l'hash del manifest
+    in ElectionGuard. Così liste, candidati, soglie, premio e limiti
+    delle preferenze sono legati a tutte le prove dell'elezione:
+    cambiare la configurazione dopo la cerimonia cambia Q, e le prove
+    dei garanti e delle schede non tornano più.
+    """
+
+    canonical = canonical_config_json(
+        election_config_to_data(config)
+    )
+
+    digest = hashlib.sha256(
+        canonical.encode("utf-8")
+    ).digest()
+
+    return int.from_bytes(digest, "big") % params.q
 
 
 def coalition_of(
@@ -420,7 +586,4 @@ def build_ballot_layout(
         list_count=len(config.list_names),
         preference_metadata=metadata,
         max_preferences=config.rules.max_preferences,
-        max_preferences_per_gender=(
-            config.rules.max_preferences_per_gender
-        ),
     )

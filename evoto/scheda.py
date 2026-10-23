@@ -36,11 +36,26 @@ class PreferenceMetadata:
     Descrive una casella di preferenza della scheda.
 
     list_index indica la lista a cui appartiene il candidato.
-    gender identifica il genere usato dal vincolo R5.
+    gender identifica il genere usato dalla regola di genere R5.
     """
 
     list_index: int
     gender: str
+
+
+# Regola di genere (legge 9 ottobre 2026, n. 180, art. 1, comma 4):
+# se le preferenze sono più di una devono riguardare candidati di sesso
+# diverso, altrimenti la seconda e la terza, nell'ordine di lista, sono
+# annullate. Il dispositivo applica l'annullamento prima di cifrare
+# (voto.py); la prova R5 dimostra che la scheda cifrata rispetta la
+# regola, cioè che le preferenze dei due generi differiscono al più di 1.
+# Con al massimo tre preferenze le due condizioni coincidono.
+MAX_GENDERS = 2
+MAX_PREFERENCES_WITH_GENDER_RULE = 3
+
+# Valori ammessi per il cifrato derivato di R5, che contiene
+# (preferenze del primo genere) - (preferenze del secondo) + 1.
+R5_ALLOWED_VALUES = (0, 1, 2)
 
 
 @dataclass(frozen=True)
@@ -48,7 +63,7 @@ class BallotLayout:
     """
     Descrive la struttura pubblica della scheda elettorale.
 
-    I metadati e i limiti delle preferenze derivano
+    I metadati e il limite delle preferenze derivano
     dalla configurazione ufficiale dell'elezione
     e non possono essere scelti dal votante.
     """
@@ -56,7 +71,6 @@ class BallotLayout:
     list_count: int
     preference_metadata: tuple[PreferenceMetadata, ...]
     max_preferences: int
-    max_preferences_per_gender: int
 
     def __post_init__(self) -> None:
         """
@@ -73,15 +87,21 @@ class BallotLayout:
                 "Il numero massimo di preferenze non può essere negativo."
             )
 
-        if self.max_preferences_per_gender < 0:
+        if self.max_preferences > MAX_PREFERENCES_WITH_GENDER_RULE:
             raise ValueError(
-                "Il numero massimo di preferenze per genere non può essere negativo."
+                "Il numero massimo di preferenze non può superare "
+                f"{MAX_PREFERENCES_WITH_GENDER_RULE}: la regola di genere "
+                "è definita per al massimo tre preferenze."
             )
 
-        if self.max_preferences_per_gender > self.max_preferences:
+        genders = {
+            metadata.gender
+            for metadata in self.preference_metadata
+        }
+
+        if len(genders) > MAX_GENDERS:
             raise ValueError(
-                "Il limite per genere non può superare "
-                "il numero massimo di preferenze."
+                "La regola di genere confronta al massimo due generi."
             )
 
         for metadata in self.preference_metadata:
@@ -127,14 +147,14 @@ class BallotProofs:
     - una prova R2 per la scelta tra liste e scheda bianca;
     - una prova R3 per ogni preferenza;
     - una prova R4 per il numero totale di preferenze;
-    - una prova R5 per ciascun genere considerato.
+    - una prova R5 per la regola di genere.
     """
 
     r1_proofs: tuple[ValueSetProof, ...]
     r2_proof: ValueSetProof
     r3_proofs: tuple[ValueSetProof, ...]
     r4_proof: ValueSetProof
-    r5_proofs: tuple[ValueSetProof, ...]
+    r5_proof: ValueSetProof
 
 
 @dataclass(frozen=True)
@@ -361,30 +381,44 @@ def _prove_ballot_r4(
     )
 
 
-def _group_preference_indices_by_gender(
+def gender_groups(
     layout: BallotLayout,
-) -> tuple[tuple[int, ...], ...]:
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
     """
-    Raggruppa gli indici delle preferenze in base al genere.
+    Divide le caselle di preferenza tra i due generi.
 
-    L'ordine dei gruppi segue la prima comparsa
-    di ciascun genere nella configurazione.
+    Il primo gruppo è quello del genere che viene prima in ordine
+    alfabetico (per esempio "F" prima di "M"), il secondo quello
+    dell'altro genere; se la scheda ha un solo genere il secondo gruppo
+    è vuoto. L'ordine è fissato perché R5 usa la differenza tra il primo
+    e il secondo gruppo, e il verificatore deve calcolare la stessa.
     """
 
-    groups: dict[str, list[int]] = {}
-
-    for index, metadata in enumerate(
-        layout.preference_metadata
-    ):
-        groups.setdefault(
-            metadata.gender,
-            [],
-        ).append(index)
-
-    return tuple(
-        tuple(indices)
-        for indices in groups.values()
+    genders = sorted(
+        {
+            metadata.gender
+            for metadata in layout.preference_metadata
+        }
     )
+
+    if len(genders) > MAX_GENDERS:
+        raise ValueError(
+            "La regola di genere confronta al massimo due generi."
+        )
+
+    first = tuple(
+        index
+        for index, metadata in enumerate(layout.preference_metadata)
+        if genders and metadata.gender == genders[0]
+    )
+
+    second = tuple(
+        index
+        for index, metadata in enumerate(layout.preference_metadata)
+        if len(genders) > 1 and metadata.gender == genders[1]
+    )
+
+    return first, second
 
 
 def _prove_ballot_r5(
@@ -394,9 +428,9 @@ def _prove_ballot_r5(
     public_key: int,
     params: GroupParameters,
     context: int,
-) -> tuple[ValueSetProof, ...]:
+) -> ValueSetProof:
     """
-    Genera una prova R5 per ciascun genere presente nella scheda.
+    Genera la prova R5 della scheda (regola di genere).
     """
 
     _validate_ballot_alignment(
@@ -405,41 +439,37 @@ def _prove_ballot_r5(
         witness,
     )
 
-    proofs = []
+    first, second = gender_groups(layout)
 
-    for indices in _group_preference_indices_by_gender(
-        layout
-    ):
-        gender_ciphertexts = tuple(
+    return prove_r5(
+        first_ciphertexts=tuple(
             ballot.preference_ciphertexts[index]
-            for index in indices
-        )
-
-        gender_plaintexts = tuple(
+            for index in first
+        ),
+        first_plaintexts=tuple(
             witness.preference_plaintexts[index]
-            for index in indices
-        )
-
-        gender_nonces = tuple(
+            for index in first
+        ),
+        first_nonces=tuple(
             witness.preference_nonces[index]
-            for index in indices
-        )
-
-        proof = prove_r5(
-            gender_ciphertexts=gender_ciphertexts,
-            gender_plaintexts=gender_plaintexts,
-            gender_nonces=gender_nonces,
-            max_preferences_per_gender=(
-                layout.max_preferences_per_gender
-            ),
-            public_key=public_key,
-            params=params,
-            context=context,
-        )
-
-        proofs.append(proof)
-
-    return tuple(proofs)
+            for index in first
+        ),
+        second_ciphertexts=tuple(
+            ballot.preference_ciphertexts[index]
+            for index in second
+        ),
+        second_plaintexts=tuple(
+            witness.preference_plaintexts[index]
+            for index in second
+        ),
+        second_nonces=tuple(
+            witness.preference_nonces[index]
+            for index in second
+        ),
+        public_key=public_key,
+        params=params,
+        context=context,
+    )
 
 
 def prove_ballot(
@@ -487,7 +517,7 @@ def prove_ballot(
         context=context,
     )
 
-    r5_proofs = _prove_ballot_r5(
+    r5_proof = _prove_ballot_r5(
         layout=layout,
         ballot=ballot,
         witness=witness,
@@ -501,7 +531,7 @@ def prove_ballot(
         r2_proof=r2_proof,
         r3_proofs=r3_proofs,
         r4_proof=r4_proof,
-        r5_proofs=r5_proofs,
+        r5_proof=r5_proof,
     )
 
 
@@ -539,12 +569,7 @@ def verify_ballot(
     ):
         return False
 
-    gender_groups = _group_preference_indices_by_gender(
-        layout
-    )
-
-    if len(proofs.r5_proofs) != len(gender_groups):
-        return False
+    first, second = gender_groups(layout)
 
     # Appartenenza al sottogruppo: K e i ciphertext della scheda si
     # controllano una volta sola. I ciphertext derivati per R2-R5 sono
@@ -630,25 +655,20 @@ def verify_ballot(
     if not r4_valid:
         return False
 
-    return all(
-        verify_r5(
-            gender_ciphertexts=tuple(
-                ballot.preference_ciphertexts[index]
-                for index in indices
-            ),
-            proof=proof,
-            max_preferences_per_gender=(
-                layout.max_preferences_per_gender
-            ),
-            public_key=public_key,
-            params=params,
-            context=context,
-            check_membership=False,
-        )
-        for indices, proof in zip(
-            gender_groups,
-            proofs.r5_proofs,
-        )
+    return verify_r5(
+        first_ciphertexts=tuple(
+            ballot.preference_ciphertexts[index]
+            for index in first
+        ),
+        second_ciphertexts=tuple(
+            ballot.preference_ciphertexts[index]
+            for index in second
+        ),
+        proof=proofs.r5_proof,
+        public_key=public_key,
+        params=params,
+        context=context,
+        check_membership=False,
     )
 
 
@@ -950,46 +970,89 @@ def verify_r4(
     )
 
 
+def gender_difference_ciphertext(
+    first_ciphertexts: tuple[Ciphertext, ...],
+    second_ciphertexts: tuple[Ciphertext, ...],
+    params: GroupParameters,
+) -> Ciphertext:
+    """
+    Cifrato derivato della regola di genere R5.
+
+    Il prodotto dei cifrati del primo genere diviso il prodotto di
+    quelli del secondo è la cifratura della differenza tra le loro
+    preferenze; moltiplicandolo per (1, g), cioè per la cifratura di 1
+    con nonce 0, si ottiene
+
+        Enc(preferenze del primo genere - preferenze del secondo + 1).
+
+    Il +1 serve a non avere valori negativi: la regola chiede che la
+    differenza valga -1, 0 oppure 1, quindi il cifrato derivato deve
+    contenere 0, 1 oppure 2.
+    """
+
+    difference = divide_ciphertexts(
+        _multiply_all(first_ciphertexts, params),
+        _multiply_all(second_ciphertexts, params),
+        params,
+    )
+
+    return Ciphertext(
+        alpha=difference.alpha,
+        beta=difference.beta * params.g % params.p,
+    )
+
+
 def prove_r5(
-    gender_ciphertexts: tuple[Ciphertext, ...],
-    gender_plaintexts: tuple[int, ...],
-    gender_nonces: tuple[int, ...],
-    max_preferences_per_gender: int,
+    first_ciphertexts: tuple[Ciphertext, ...],
+    first_plaintexts: tuple[int, ...],
+    first_nonces: tuple[int, ...],
+    second_ciphertexts: tuple[Ciphertext, ...],
+    second_plaintexts: tuple[int, ...],
+    second_nonces: tuple[int, ...],
     public_key: int,
     params: GroupParameters,
     context: int,
 ) -> ValueSetProof:
     """
-    Genera la prova R5 per un singolo genere.
+    Genera la prova R5, la regola di genere.
 
-    La somma delle preferenze dello stesso genere deve
-    appartenere all'insieme {0, ..., max_preferences_per_gender}.
+    Le preferenze dei due generi devono differire al più di 1: il
+    cifrato derivato di gender_difference_ciphertext deve contenere
+    0, 1 oppure 2. Con al massimo tre preferenze equivale a dire che
+    più preferenze riguardano candidati di genere diverso, come chiede
+    la legge. Una scheda che viola la regola non ottiene la prova.
     """
 
     if not (
-        len(gender_ciphertexts)
-        == len(gender_plaintexts)
-        == len(gender_nonces)
+        len(first_ciphertexts)
+        == len(first_plaintexts)
+        == len(first_nonces)
+    ) or not (
+        len(second_ciphertexts)
+        == len(second_plaintexts)
+        == len(second_nonces)
     ):
         raise ValueError(
             "Ciphertext, plaintext e nonce devono avere la stessa lunghezza."
         )
 
-    derived_ciphertext = _multiply_all(
-        gender_ciphertexts,
+    derived_ciphertext = gender_difference_ciphertext(
+        first_ciphertexts,
+        second_ciphertexts,
         params,
     )
 
-    total_plaintext = sum(gender_plaintexts)
-    derived_nonce = sum(gender_nonces) % params.q
+    derived_plaintext = sum(first_plaintexts) - sum(second_plaintexts) + 1
+
+    # La cifratura di 1 aggiunta ha nonce 0: il nonce del cifrato
+    # derivato è la differenza delle somme dei nonce.
+    derived_nonce = (sum(first_nonces) - sum(second_nonces)) % params.q
 
     return prove_value_in_set(
         ciphertext=derived_ciphertext,
-        plaintext=total_plaintext,
+        plaintext=derived_plaintext,
         nonce=derived_nonce,
-        allowed_values=tuple(
-            range(max_preferences_per_gender + 1)
-        ),
+        allowed_values=R5_ALLOWED_VALUES,
         public_key=public_key,
         params=params,
         context=context,
@@ -997,8 +1060,8 @@ def prove_r5(
 
 
 def verify_r5(
-    gender_ciphertexts: tuple[Ciphertext, ...],
-    max_preferences_per_gender: int,
+    first_ciphertexts: tuple[Ciphertext, ...],
+    second_ciphertexts: tuple[Ciphertext, ...],
     proof: ValueSetProof,
     public_key: int,
     params: GroupParameters,
@@ -1006,20 +1069,19 @@ def verify_r5(
     check_membership: bool = True,
 ) -> bool:
     """
-    Verifica la prova R5 per un singolo genere.
+    Verifica la prova R5, la regola di genere.
     """
 
-    derived_ciphertext = _multiply_all(
-        gender_ciphertexts,
+    derived_ciphertext = gender_difference_ciphertext(
+        first_ciphertexts,
+        second_ciphertexts,
         params,
     )
 
     return verify_value_in_set(
         ciphertext=derived_ciphertext,
         proof=proof,
-        allowed_values=tuple(
-            range(max_preferences_per_gender + 1)
-        ),
+        allowed_values=R5_ALLOWED_VALUES,
         public_key=public_key,
         params=params,
         context=context,

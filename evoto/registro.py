@@ -11,7 +11,10 @@ privati vengano inclusi accidentalmente nel registro.
 import json
 from evoto.elgamal import Ciphertext
 from evoto.decifratura import DecryptionShare
-from evoto.garanti import GuardianRecord
+from evoto.garanti import (
+    GuardianRecord,
+    compute_base_hash,
+)
 from evoto.prove import (
     ChaumPedersenProof,
     SchnorrProof,
@@ -31,11 +34,9 @@ from evoto.urna import (
     DistrictResult,
     DistrictTally,
 )
-from fractions import Fraction
-
 from evoto.configurazione import (
-    Candidate,
-    ElectionConfig,
+    config_fingerprint,
+    election_config_to_data,
 )
 from evoto.scrutinio import (
     Competitor,
@@ -195,10 +196,9 @@ def _ballot_proofs_to_data(
         "r4_proof": _value_set_proof_to_data(
             proofs.r4_proof
         ),
-        "r5_proofs": [
-            _value_set_proof_to_data(proof)
-            for proof in proofs.r5_proofs
-        ],
+        "r5_proof": _value_set_proof_to_data(
+            proofs.r5_proof
+        ),
     }
 
 
@@ -335,101 +335,6 @@ def _district_result_to_data(
     }
 
 
-def _fraction_to_percent(
-    value: Fraction,
-) -> int | float:
-    """
-    Riporta una frazione alla percentuale del file di configurazione.
-    """
-
-    percent = value * 100
-
-    if percent.denominator == 1:
-        return percent.numerator
-
-    return float(percent)
-
-
-def _candidate_to_data(
-    candidate: Candidate,
-) -> dict[str, str]:
-    """
-    Converte un candidato nella forma della configurazione pubblica.
-    """
-
-    return {
-        "name": candidate.name,
-        "gender": candidate.gender,
-    }
-
-
-def _election_config_to_data(
-    config: ElectionConfig,
-) -> dict[str, object]:
-    """
-    Ricostruisce la configurazione pubblica nel formato JSON ufficiale.
-    """
-
-    coalition_by_list: dict[int, str] = {}
-
-    for coalition in config.coalitions:
-        for list_index in coalition.list_indices:
-            coalition_by_list[list_index] = coalition.name
-
-    lists = [
-        {
-            "name": list_name,
-            "coalition": coalition_by_list.get(list_index),
-        }
-        for list_index, list_name in enumerate(config.list_names)
-    ]
-
-    districts = []
-
-    for district in config.districts:
-        candidates = {
-            config.list_names[list_index]: [
-                _candidate_to_data(candidate)
-                for candidate in list_candidates
-            ]
-            for list_index, list_candidates in enumerate(
-                district.candidates
-            )
-        }
-
-        districts.append(
-            {
-                "name": district.name,
-                "candidates": candidates,
-            }
-        )
-
-    return {
-        "name": config.name,
-        "election_id": config.election_id,
-        "seats": config.seats,
-        "rules": {
-            "max_preferences": config.rules.max_preferences,
-            "max_preferences_per_gender":
-                config.rules.max_preferences_per_gender,
-            "list_threshold_percent": _fraction_to_percent(
-                config.rules.list_threshold
-            ),
-            "coalition_threshold_percent": _fraction_to_percent(
-                config.rules.coalition_threshold
-            ),
-            "bonus_threshold_percent": _fraction_to_percent(
-                config.rules.bonus_threshold
-            ),
-            "bonus_seats_percent": _fraction_to_percent(
-                config.rules.bonus_seat_share
-            ),
-        },
-        "lists": lists,
-        "districts": districts,
-    }
-
-
 def _competitor_to_data(
     competitor: Competitor,
 ) -> dict[str, object]:
@@ -542,8 +447,21 @@ def build_public_registry(
             "La bacheca usa un contesto Q_bar diverso dalla cerimonia."
         )
 
+    fingerprint = config_fingerprint(report.config, params)
+
+    if compute_base_hash(
+        params,
+        guardian_count,
+        quorum,
+        fingerprint,
+    ) != report.ceremony.base_hash:
+        raise ValueError(
+            "La cerimonia non usa l'impronta di questa configurazione "
+            "nel contesto Q."
+        )
+
     return {
-        "configuration": _election_config_to_data(
+        "configuration": election_config_to_data(
             report.config
         ),
         "group": {
@@ -554,7 +472,9 @@ def build_public_registry(
         "election_context": {
             "n": guardian_count,
             "quorum": quorum,
-            "e": report.config.election_id,
+            # e è l'impronta della configurazione pubblicata qui sopra:
+            # il verificatore la ricalcola per conto suo (V2).
+            "e": fingerprint,
             "Q": report.ceremony.base_hash,
             "Q_bar": report.ceremony.extended_base_hash,
         },

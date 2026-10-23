@@ -17,6 +17,7 @@ from evoto.scheda import (
 from evoto.urna import compute_ballot_hash
 from evoto.voto import (
     VoterChoice,
+    apply_gender_rule,
     choice_to_plaintexts,
     prepare_ballot,
 )
@@ -29,7 +30,6 @@ DISTRICT = 0
 LAYOUT = BallotLayout(
     list_count=2,
     max_preferences=3,
-    max_preferences_per_gender=2,
     preference_metadata=(
         PreferenceMetadata(list_index=0, gender="F"),
         PreferenceMetadata(list_index=0, gender="M"),
@@ -233,38 +233,93 @@ def test_four_preferences_cannot_be_proved():
         prepare(VoterChoice(list_index=0, preferences=(0, 1, 2, 3)))
 
 
-def test_three_preferences_of_the_same_gender_cannot_be_proved():
-    """
-    R5: al massimo due preferenze dello stesso genere.
+# Lista con tre candidate e un candidato, nell'ordine F, F, F, M.
+GENDER_LAYOUT = BallotLayout(
+    list_count=1,
+    max_preferences=3,
+    preference_metadata=(
+        PreferenceMetadata(list_index=0, gender="F"),
+        PreferenceMetadata(list_index=0, gender="F"),
+        PreferenceMetadata(list_index=0, gender="F"),
+        PreferenceMetadata(list_index=0, gender="M"),
+    ),
+)
 
-    Serve una lista con almeno tre candidate dello stesso genere,
-    quindi usiamo un layout dedicato.
+
+@pytest.mark.parametrize(
+    ("preferences", "kept", "annulled"),
+    [
+        ((), (), ()),
+        ((1,), (1,), ()),
+        ((0, 3), (0, 3), ()),
+        ((0, 1, 3), (0, 1, 3), ()),
+        ((0, 1), (0,), (1,)),
+        ((2, 0, 1), (0,), (1, 2)),
+        ((2, 1), (1,), (2,)),
+    ],
+)
+def test_gender_rule_keeps_the_first_preference_in_list_order(
+    preferences,
+    kept,
+    annulled,
+):
+    """
+    Più preferenze tutte dello stesso genere: resta solo la prima in
+    ordine di lista, la seconda e la terza sono annullate (legge
+    9 ottobre 2026, n. 180, art. 1, comma 4). Con entrambi i generi
+    non si annulla nulla.
     """
 
-    layout = BallotLayout(
-        list_count=1,
-        max_preferences=3,
-        max_preferences_per_gender=2,
-        preference_metadata=(
-            PreferenceMetadata(list_index=0, gender="F"),
-            PreferenceMetadata(list_index=0, gender="F"),
-            PreferenceMetadata(list_index=0, gender="F"),
-            PreferenceMetadata(list_index=0, gender="M"),
-        ),
+    assert apply_gender_rule(GENDER_LAYOUT, preferences) == (
+        kept,
+        annulled,
     )
 
-    with pytest.raises(ValueError):
-        prepare_ballot(
-            layout=layout,
-            district_index=DISTRICT,
-            choice=VoterChoice(list_index=0, preferences=(0, 1, 2)),
-            public_key=PUBLIC_KEY,
-            params=TEST_PARAMS,
-            extended_base_hash=CONTEXT,
-        )
+
+def test_device_annuls_preferences_of_the_same_gender():
+    """
+    Il dispositivo applica la regola prima di cifrare: tre preferenze
+    alle candidate F diventano una preferenza alla prima, e la scheda
+    ottiene le prove.
+    """
+
+    choice = VoterChoice(list_index=0, preferences=(0, 1, 2))
+
+    assert choice_to_plaintexts(GENDER_LAYOUT, choice) == (
+        (1,),
+        0,
+        (1, 0, 0, 0),
+    )
 
     prepared = prepare_ballot(
-        layout=layout,
+        layout=GENDER_LAYOUT,
+        district_index=DISTRICT,
+        choice=choice,
+        public_key=PUBLIC_KEY,
+        params=TEST_PARAMS,
+        extended_base_hash=CONTEXT,
+    )
+
+    assert prepared.witness.preference_plaintexts == (1, 0, 0, 0)
+
+    assert verify_ballot(
+        layout=GENDER_LAYOUT,
+        ballot=prepared.ballot,
+        proofs=prepared.proofs,
+        public_key=PUBLIC_KEY,
+        params=TEST_PARAMS,
+        context=CONTEXT,
+    )
+
+
+def test_preferences_of_both_genders_are_kept():
+    """
+    Due candidate e un candidato: le preferenze riguardano generi
+    diversi e restano tutte e tre.
+    """
+
+    prepared = prepare_ballot(
+        layout=GENDER_LAYOUT,
         district_index=DISTRICT,
         choice=VoterChoice(list_index=0, preferences=(0, 1, 3)),
         public_key=PUBLIC_KEY,
@@ -272,8 +327,10 @@ def test_three_preferences_of_the_same_gender_cannot_be_proved():
         extended_base_hash=CONTEXT,
     )
 
+    assert prepared.witness.preference_plaintexts == (1, 1, 0, 1)
+
     assert verify_ballot(
-        layout=layout,
+        layout=GENDER_LAYOUT,
         ballot=prepared.ballot,
         proofs=prepared.proofs,
         public_key=PUBLIC_KEY,

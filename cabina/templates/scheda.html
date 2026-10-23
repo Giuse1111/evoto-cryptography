@@ -11,7 +11,8 @@
   <li>Segna <strong>una lista</strong>, oppure la scheda bianca.</li>
   <li>
     Se vuoi, dai fino a <strong>{{ layout.max_preferences }} preferenze</strong> a candidati della
-    stessa lista, non più di {{ layout.max_preferences_per_gender }} dello stesso genere.
+    stessa lista. Se ne dai più di una devono riguardare candidati di genere diverso: altrimenti,
+    come prevede la legge, vale solo la prima in ordine di lista.
   </li>
   <li>Il capolista è bloccato: non riceve preferenze. Una preferenza senza lista vale anche come voto alla lista.</li>
 </ul>
@@ -20,7 +21,6 @@
 
 <form method="post" id="scheda"
       data-max="{{ layout.max_preferences }}"
-      data-max-gender="{{ layout.max_preferences_per_gender }}"
       data-busy="Cifratura della scheda e costruzione delle prove…">
 
   {% for group in groups %}

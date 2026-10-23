@@ -96,6 +96,11 @@ def compute_base_hash(
     Q = H(p, q, g, n, k, e)
 
     Serve prima che la chiave congiunta esista, quindi non la contiene.
+
+    election_id è il valore e. Per un'elezione politica è l'impronta
+    della configurazione (configurazione.config_fingerprint), come
+    l'hash del manifest in ElectionGuard; negli esempi senza
+    configurazione, come il referendum, è un numero qualsiasi.
     """
 
     if guardian_count < 1:

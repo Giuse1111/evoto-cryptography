@@ -22,6 +22,7 @@ import time
 from evoto.configurazione import (
     ElectionConfig,
     build_ballot_layout,
+    config_fingerprint,
 )
 from evoto.garanti import (
     KeyCeremony,
@@ -82,16 +83,18 @@ def random_choice(
     list_weights: tuple[float, ...],
     blank_probability: float,
     max_preferences: int,
-    max_preferences_per_gender: int,
 ) -> VoterChoice:
     """
-    Genera una scelta casuale ma valida.
+    Genera una scelta casuale ma ammessa dalla scheda.
 
     Con probabilità blank_probability la scheda è bianca; altrimenti
     si sceglie una lista secondo i pesi e da zero a max_preferences
-    preferenze nella stessa lista, rispettando il vincolo di genere.
-    Ogni tanto la lista non viene segnata e resta implicita nelle
-    preferenze, come ammette la scheda.
+    preferenze nella stessa lista. Le preferenze possono essere tutte
+    dello stesso genere, come può capitare con un elettore vero: il
+    dispositivo applica poi la regola di genere della legge e annulla
+    quelle in eccesso (voto.apply_gender_rule). Ogni tanto la lista non
+    viene segnata e resta implicita nelle preferenze, come ammette la
+    scheda.
     """
 
     if rng.random() < blank_probability:
@@ -111,20 +114,8 @@ def random_choice(
     rng.shuffle(boxes)
 
     wanted = rng.randint(0, max_preferences)
-    chosen: list[int] = []
-    per_gender: dict[str, int] = {}
 
-    for box in boxes:
-        if len(chosen) == wanted:
-            break
-
-        gender = layout.preference_metadata[box].gender
-
-        if per_gender.get(gender, 0) < max_preferences_per_gender:
-            chosen.append(box)
-            per_gender[gender] = per_gender.get(gender, 0) + 1
-
-    preferences = tuple(sorted(chosen))
+    preferences = tuple(sorted(boxes[:wanted]))
 
     if preferences and rng.random() < 0.1:
         return VoterChoice(list_index=None, preferences=preferences)
@@ -141,7 +132,8 @@ def plaintext_count(
     Conta in chiaro le scelte di una circoscrizione.
 
     È il termine di confronto dell'esperimento: non usa nessuna
-    primitiva crittografica.
+    primitiva crittografica. Come uno scrutatore, annulla le preferenze
+    che la regola di genere non ammette (choice_to_plaintexts).
     """
 
     list_votes = [0] * layout.list_count
@@ -203,14 +195,15 @@ def simulate_election(
     rng = random.Random(seed)
     timings: dict[str, float] = {}
 
-    # Fase 1: cerimonia delle chiavi
+    # Fase 1: cerimonia delle chiavi. Nel contesto Q entra l'impronta
+    # della configurazione, che lega le regole dell'elezione alle prove.
     start = time.perf_counter()
 
     ceremony = run_key_ceremony(
         guardian_count=guardian_count,
         quorum=quorum,
         params=params,
-        election_id=config.election_id,
+        election_id=config_fingerprint(config, params),
     )
 
     timings["cerimonia"] = (
@@ -267,7 +260,6 @@ def simulate_election(
             list_weights,
             blank_probability,
             config.rules.max_preferences,
-            config.rules.max_preferences_per_gender,
         )
 
         if rng.random() < spoil_probability:

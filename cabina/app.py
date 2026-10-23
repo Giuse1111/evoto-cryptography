@@ -55,11 +55,15 @@ from cabina.sessione import (
     PLAIN_CHECK_DESCRIPTIONS,
     TAMPERINGS,
     ElectionSession,
+    annulled_preferences,
     format_code,
     normalize_card,
     normalize_code,
 )
-from evoto.configurazione import coalition_of
+from evoto.configurazione import (
+    coalition_of,
+    preference_candidates,
+)
 from evoto.urna import CAST
 from evoto.voto import (
     VoterChoice,
@@ -457,6 +461,15 @@ def create_app(
                 error = str(exception)
             else:
                 layout = session.layouts[district]
+                boxes = preference_candidates(session.config, district)
+                candidates = session.config.districts[district].candidates
+
+                # Preferenze annullate dalla regola di genere: il
+                # dispositivo le ha già tolte, qui le mostriamo.
+                annulled = [
+                    candidates[boxes[box][0]][boxes[box][1]].name
+                    for box in annulled_preferences(layout, choice)
+                ]
 
                 return render_template(
                     "conferma.html",
@@ -467,13 +480,15 @@ def create_app(
                         district,
                         *choice_to_plaintexts(layout, choice),
                     ),
+                    annulled=annulled,
                     ciphertexts=len(layout.preference_metadata)
                     + layout.list_count
                     + 1,
+                    # R1 e R3 hanno una prova per casella; R2, R4 e R5
+                    # una prova ciascuna.
                     proofs=len(pending.prepared.proofs.r1_proofs)
                     + len(pending.prepared.proofs.r3_proofs)
-                    + len(pending.prepared.proofs.r5_proofs)
-                    + 2,
+                    + 3,
                 )
 
         # Dopo un errore la scheda torna con le scelte già fatte.

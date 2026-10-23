@@ -2,7 +2,7 @@
 
 **eVoto** è una libreria Python per sistemi di voto elettronico in cui il voto rimane segreto e il risultato può essere verificato pubblicamente.
 
-Il progetto prende spunto dall'architettura di [ElectionGuard](https://github.com/Election-Tech-Initiative/electionguard-python), ma ne realizza una versione semplificata e didattica. Oggi simula un'elezione politica italiana completa: liste, coalizioni, capolista bloccato, preferenze con vincolo di genere, bacheca pubblica, scrutinio con premio di governabilità ed eletti. L'elezione viene esportata in un registro pubblico JSON, che un verificatore indipendente ricontrolla da solo, passo per passo. Gli esperimenti della tesina misurano il comportamento con garanti assenti e i costi di una scheda, un notebook didattico ripercorre il protocollo con numeri piccoli e una cabina elettorale web locale mostra l'intera elezione nel browser.
+Il progetto prende spunto dall'architettura di [ElectionGuard](https://github.com/Election-Tech-Initiative/electionguard-python), ma ne realizza una versione semplificata e didattica. Oggi simula un'elezione politica italiana completa: liste, coalizioni, capolista bloccato, preferenze con la regola di genere della legge, bacheca pubblica, scrutinio con premio di governabilità ed eletti. L'elezione viene esportata in un registro pubblico JSON, che un verificatore indipendente ricontrolla da solo, passo per passo. Gli esperimenti della tesina misurano il comportamento con garanti assenti e i costi di una scheda, un notebook didattico ripercorre il protocollo con numeri piccoli e una cabina elettorale web locale mostra l'intera elezione nel browser.
 
 > [!WARNING]
 > eVoto è un progetto universitario e non è progettato per elezioni reali. I test e gli esempi usano soprattutto un gruppo crittografico didattico di piccole dimensioni; per la demo è disponibile un gruppo da 2048 bit. I principali limiti sono riportati nella sezione [Sicurezza e limiti](#sicurezza-e-limiti).
@@ -70,7 +70,7 @@ Il totale viene recuperato da `g^t` tramite un logaritmo discreto limitato. Nel 
 - **Chaum-Pedersen**, per dimostrare che due valori dipendono dallo stesso esponente;
 - una prova **OR**, per dimostrare che un cifrato contiene uno dei valori ammessi, ad esempio `0` oppure `1`.
 
-Le prove vengono rese non interattive tramite **Fiat-Shamir**. Nell'hash vengono inclusi il contesto dell'elezione, l'enunciato della prova e i relativi impegni.
+Le prove vengono rese non interattive tramite **Fiat-Shamir**. Nell'hash vengono inclusi il contesto dell'elezione, l'enunciato della prova e i relativi impegni. Il contesto contiene l'impronta della configurazione (liste, candidati, soglie, premio), come l'hash del manifest in ElectionGuard: cambiare le regole dopo la cerimonia delle chiavi invalida tutte le prove.
 
 **Decifratura a soglia.** Le quote segrete vengono costruite con **Shamir Secret Sharing** e accompagnate da impegni di **Feldman**. Durante lo spoglio, le quote di almeno `k` garanti vengono combinate tramite i **coefficienti di Lagrange**.
 
@@ -84,7 +84,7 @@ La scheda politica è implementata in `scheda.py`. Le sue regole sono:
 | R2 | La scelta è una sola tra le liste e la scheda bianca. |
 | R3 | Le preferenze possono riguardare solo candidati della lista votata. |
 | R4 | Le preferenze non superano il massimo fissato nella configurazione (3 nell'esempio). |
-| R5 | Le preferenze dello stesso genere non superano il limite fissato nella configurazione (2 nell'esempio). |
+| R5 | Regola di genere della legge 9 ottobre 2026, n. 180: più preferenze devono riguardare candidati di genere diverso. Il dispositivo tiene solo la prima in ordine di lista se sono tutte dello stesso genere; la prova dimostra che le preferenze dei due generi differiscono al più di 1. |
 
 Questi vincoli vengono tradotti in prove a conoscenza zero sui valori cifrati. In generale, la verifica richiede di dimostrare che un valore appartiene a un insieme limitato `{0, ..., k}`.
 
@@ -111,7 +111,7 @@ eVoto è utilizzabile come **libreria Python**, con la demo da riga di comando `
 | `evoto/prove.py` | Prove di Schnorr, Chaum-Pedersen e OR generica | Completato |
 | `evoto/garanti.py` | Cerimonia delle chiavi, Shamir, Feldman e chiave pubblica congiunta | Completato |
 | `evoto/decifratura.py` | Decifratura a soglia, Lagrange e prove sulle share | Completato |
-| `evoto/scheda.py` | Scheda politica e prove delle regole R1–R5 | Completato; limiti delle preferenze presi dalla configurazione |
+| `evoto/scheda.py` | Scheda politica e prove delle regole R1–R5 | Completato; regola di genere della legge 180/2026 |
 | `evoto/configurazione.py` | Lettura della configurazione dell'elezione e layout delle schede | Completato |
 | `evoto/voto.py` | Dalla scelta dell'elettore alla scheda cifrata con le prove | Completato |
 | `evoto/urna.py` | Bacheca, codici di tracciamento, sfida di Benaloh, aventi diritto, conteggio e decifratura per circoscrizione | Completato |
@@ -322,7 +322,11 @@ Confronto con il conteggio in chiaro
 Lo stesso percorso si può seguire con la libreria. Questo esempio vota in una circoscrizione e ne decifra i totali:
 
 ```python
-from evoto.configurazione import build_ballot_layout, load_election_config
+from evoto.configurazione import (
+    build_ballot_layout,
+    config_fingerprint,
+    load_election_config,
+)
 from evoto.garanti import run_key_ceremony
 from evoto.gruppo import TEST_PARAMS
 from evoto.urna import (
@@ -338,12 +342,13 @@ from evoto.voto import VoterChoice, prepare_ballot
 params = TEST_PARAMS
 config = load_election_config("config/elezione_esempio.json")
 
-# 1. Cerimonia delle chiavi.
+# 1. Cerimonia delle chiavi: nel contesto Q entra l'impronta della
+#    configurazione, che lega le regole dell'elezione a tutte le prove.
 ceremony = run_key_ceremony(
     guardian_count=5,
     quorum=3,
     params=params,
-    election_id=config.election_id,
+    election_id=config_fingerprint(config, params),
 )
 public_key = ceremony.joint_public_key
 context = ceremony.extended_base_hash
@@ -420,10 +425,10 @@ Poi si apre <http://127.0.0.1:8000>. All'avvio viene preparata la prima simulazi
 La pagina iniziale spiega cosa garantisce il sistema e come si usa la demo, con un glossario delle parole principali, e porta al primo passo. Il menu in alto segue i cinque passi della prova, una voce per pagina, e segna i passi già fatti; in fondo a ogni pagina un riquadro indica il passo successivo. Si comincia sempre da *Prepara*: finché la simulazione non è stata scelta lì, le pagine del voto restano bloccate.
 
 1. **Prepara.** La simulazione preparata all'avvio si usa con un clic (*Usa questa simulazione*), senza attese. Oppure si sceglie come votano gli elettori simulati dell'elezione di esempio: modalità realistica (2048 bit, fino a 20 elettori per circoscrizione) o veloce (gruppo didattico, fino a 200), numero di elettori, tendenza di voto (una coalizione in testa, testa a testa, tutte le liste alla pari, a sorpresa), percentuale di schede bianche e di sfide del dispositivo, garanti e quorum (3 e 2, 5 e 3, 7 e 4), seme. La pagina stima la durata e mostra l'avanzamento mentre la simulazione si prepara; liste, coalizioni e candidati restano quelli della configurazione.
-2. **Vota.** Si accede con una carta d'identità fittizia (un numero nel formato della carta d'identità elettronica, per esempio `CA12345AB`, legato a una circoscrizione) e si segna una lista con fino a tre preferenze. Una preferenza segna da sola la sua lista; l'interfaccia segnala i limiti R4 ed R5. La pagina successiva riepiloga la scelta: si può depositare la scheda oppure sfidare il dispositivo; l'impronta della scheda resta nei dettagli tecnici, perché per ritrovare il voto serve il codice di tracciamento. La sfida di Benaloh pubblica la scheda come scheda di prova con i valori casuali, mostra che contiene proprio la scelta fatta e lascia votare di nuovo. Dopo il deposito l'elettore riceve il codice di tracciamento.
+2. **Vota.** Si accede con una carta d'identità fittizia (un numero nel formato della carta d'identità elettronica, per esempio `CA12345AB`, legato a una circoscrizione) e si segna una lista con fino a tre preferenze. Una preferenza segna da sola la sua lista; l'interfaccia segnala il limite R4 e avvisa se le preferenze sono tutte dello stesso genere, perché per legge vale solo la prima in ordine di lista (la pagina di conferma dice quali sono state annullate). La pagina successiva riepiloga la scelta: si può depositare la scheda oppure sfidare il dispositivo; l'impronta della scheda resta nei dettagli tecnici, perché per ritrovare il voto serve il codice di tracciamento. La sfida di Benaloh pubblica la scheda come scheda di prova con i valori casuali, mostra che contiene proprio la scelta fatta e lascia votare di nuovo. Dopo il deposito l'elettore riceve il codice di tracciamento.
 3. **Bacheca.** Il codice si ritrova sulla bacheca con le sue prime cifre, anche copiato con spazi o puntini; la catena dei codici risulta integra.
 4. **Spoglio e risultati.** Si scelgono i garanti presenti e si conferma la chiusura: con meno del quorum la decifratura è impossibile e il voto resta aperto (E2), altrimenti la stessa pagina mostra voti, premio, seggi ed eletti.
-5. **Verifica.** *Lancia il verificatore* esegue i controlli V1–V8 sul registro pubblico e mostra «ELEZIONE VERIFICATA», con ogni controllo spiegato anche a parole. *Manometti e verifica* altera il registro (un voto, un seggio, una casella cifrata, un codice, una share, una prova di un garante) e indica quali controlli falliscono (E3). Il registro si scarica dalla pagina.
+5. **Verifica.** *Lancia il verificatore* esegue i controlli V1–V8 sul registro pubblico e mostra «ELEZIONE VERIFICATA», con ogni controllo spiegato anche a parole. *Manometti e verifica* altera il registro (un voto, un seggio, una casella cifrata, un codice, una share, una prova di un garante, la soglia del premio con i seggi ricalcolati) e indica quali controlli falliscono (E3). Il registro si scarica dalla pagina.
 
 Nella scheda, *Esperimento: dispositivo scorretto* spegne i controlli dell'interfaccia: una preferenza in un'altra lista non riesce a ottenere le prove e la scheda non entra nella bacheca (E4).
 
@@ -513,8 +518,8 @@ Il codice di uscita vale `0` se l'elezione è verificata, `1` se almeno un contr
 | Controllo | Cosa verifica |
 |---|---|
 | V1 | Parametri del gruppo e chiave pubblica |
-| V2 | Contesto `Q`, prove di Schnorr dei garanti, chiave pubblica congiunta e `Q_bar` |
-| V3 | Prove R1–R5 di ogni scheda, con i limiti presi dalla configurazione |
+| V2 | Impronta della configurazione, contesto `Q`, prove di Schnorr dei garanti, chiave pubblica congiunta e `Q_bar` |
+| V3 | Prove R1–R5 di ogni scheda, con il limite delle preferenze preso dalla configurazione |
 | V4 | Catena dei codici di tracciamento, schede sprecate ricifrate, assenza di copie |
 | V5 | Totali cifrati ricalcolati dalle sole schede depositate |
 | V6 | Chiavi di verifica dei garanti, prove sulle share di decifratura, quorum |
@@ -566,15 +571,15 @@ uv run python -m esperimenti.e5_costi --python-puro --csv misure_e5.csv
 uv run python -m esperimenti.e5_costi --liste 2,10 --candidati 8 --ripetizioni 1
 ```
 
-Ogni misura cifra e verifica schede vere con `prepare_ballot` e `verify_ballot`; le esponenziazioni modulari vengono contate durante l'esecuzione. La scheda di riferimento ha 10 liste, ciascuna con capolista e 8 candidati: 91 cifrati, 175 prove e 353 rami delle prove OR. Valori indicativi, misurati su un portatile: su un'altra macchina cambiano i tempi, non le dimensioni né il numero di esponenziazioni.
+Ogni misura cifra e verifica schede vere con `prepare_ballot` e `verify_ballot`; le esponenziazioni modulari vengono contate durante l'esecuzione. La scheda di riferimento ha 10 liste, ciascuna con capolista e 8 candidati: 91 cifrati, 174 prove e 350 rami delle prove OR. Valori indicativi, misurati su un portatile: su un'altra macchina cambiano i tempi, non le dimensioni né il numero di esponenziazioni.
 
 | Configurazione | Dimensione | Cifratura | Verifica |
 |---|---|---|---|
-| `p` da 4096 bit, con gli impegni delle prove, Python puro | 0,48 MB | 27 s | 23 s |
+| `p` da 4096 bit, con gli impegni delle prove, Python puro | 0,47 MB | 27 s | 23 s |
 | `p` da 4096 bit, forma compatta, `gmpy2` | 0,12 MB | 1,4 s | 1,2 s |
 | `p` da 2048 bit e `q` da 256 bit, forma compatta, `gmpy2` | 0,07 MB | 0,4 s | 0,4 s |
 
-Nella forma compatta le prove contengono solo sfide e risposte, perché gli impegni si ricalcolano; il nostro registro pubblica anche gli impegni (0,25 MB a 2048 bit). Le dimensioni coincidono con le stime della proposta di progetto. La verifica esegue circa 1.950 esponenziazioni, contro le circa 1.000 della stima: l'appartenenza al sottogruppo (`x^q = 1`) si controlla una volta per la chiave e per ciascuno dei 182 elementi dei cifrati, perché per gli impegni delle prove e per i cifrati derivati è implicata dalle equazioni. Prima della revisione i controlli erano 1.231 e la verifica richiedeva 2.996 esponenziazioni. `gmpy2` è da 8 a 20 volte più veloce di `pow()`, a seconda della macchina.
+Nella forma compatta le prove contengono solo sfide e risposte, perché gli impegni si ricalcolano; il nostro registro pubblica anche gli impegni (0,25 MB a 2048 bit). Le dimensioni coincidono con le stime della proposta di progetto. La verifica esegue 1.933 esponenziazioni, cinque per ciascuno dei 350 rami più 183 controlli di appartenenza, contro le circa 1.000 della stima: l'appartenenza al sottogruppo (`x^q = 1`) si controlla una volta per la chiave e per ciascuno dei 182 elementi dei cifrati, perché per gli impegni delle prove e per i cifrati derivati è implicata dalle equazioni. Prima della revisione i controlli erano 1.231 e la verifica richiedeva 2.996 esponenziazioni. I tempi sono la mediana di `--ripetizioni` esecuzioni (3 se non indicato); il CSV contiene anche il minimo e il massimo. `gmpy2` è da 8 a 20 volte più veloce di `pow()`, a seconda della macchina.
 
 Su una circoscrizione di un milione di elettori, con il gruppo da 2048 bit, la bacheca occupa circa 70 GB in forma compatta e la verifica di tutte le schede richiede circa 100 ore su un core. Le schede si verificano in modo indipendente, quindi il lavoro si divide tra più core. Il conteggio omomorfico richiede circa 45 minuti, la decifratura di tutti i totali pochi secondi: il costo è dominato dalla verifica delle singole schede.
 
@@ -791,6 +796,7 @@ Per eseguirli serve un clone locale di ElectionGuard nella cartella `riferimento
 ```bash
 git clone https://github.com/Election-Tech-Initiative/electionguard-python.git riferimento
 cd riferimento
+git checkout a975384          # tag v1.4.0 più 7 commit: la versione su cui i test passano
 uv venv -p 3.12 .venv
 uv pip install -p .venv/bin/python -e . hypothesis pytest gmpy2
 cd ..
@@ -805,7 +811,7 @@ I test controllano in particolare:
 |---|---|
 | T1 | Con stessa chiave e nonce, i cifrati coincidono con quelli di ElectionGuard |
 | T2 | L'hash `H` produce gli stessi valori di `hash_elems` |
-| T3 | Le implementazioni accettano reciprocamente le prove 0/1 |
+| T3 | Le implementazioni accettano reciprocamente le prove 0/1; la prova di ElectionGuard viene controllata anche dal verificatore indipendente |
 | T4 | Sugli stessi voti e nonce, i totali cifrati coincidono con quelli di ElectionGuard e il totale decifrato con il conteggio in chiaro |
 
 ElectionGuard viene usato solo come riferimento per i test: la libreria `evoto` non lo importa e non ne dipende.
@@ -817,7 +823,9 @@ eVoto è un progetto didattico e non deve essere considerato pronto per un uso r
 - **Parametri crittografici.** `TEST_PARAMS` è volutamente piccolo e serve solo per test ed esempi. `DEMO_PARAMS` usa un gruppo da 2048 bit con sottogruppo da 256 bit (RFC 5114): poiché `(p - 1) / q` ha fattori piccoli, ogni elemento ricevuto viene controllato con `is_subgroup_element`.
 - **Garanti simulati.** I garanti sono gestiti nello stesso programma e le share passano in memoria. In un sistema reale dovrebbero essere entità separate, con dispositivi e canali protetti. Di conseguenza, `KeyCeremony.secret_shares` contiene attualmente tutte le share insieme.
 - **Gestione degli errori nella cerimonia.** Una share non valida interrompe la cerimonia invece di portare all'esclusione del garante.
-- **Scrutinio semplificato.** Il riparto segue le regole principali ma non tutte quelle della legge vera: per esempio il numero di seggi di ogni circoscrizione non è fissato in anticipo e i pareggi si risolvono con regole semplici e dichiarate.
+- **Scrutinio semplificato.** Il riparto segue le regole principali ma non tutte quelle della legge vera: per esempio il premio porta il vincitore al 55% dei seggi invece di assegnare 70 seggi aggiuntivi, il numero di seggi di ogni circoscrizione non è fissato in anticipo e i pareggi si risolvono con regole semplici e dichiarate.
+- **Preferenze in altre liste.** La legge annulla la preferenza data a un candidato di un'altra lista; il nostro dispositivo invece non accetta quella scelta, perché la prova R3 non si costruisce.
+- **Configurazione.** La sua impronta lega le regole alle prove, ma non dice se sono quelle giuste: chi controlla l'elezione deve confrontarla con la configurazione pubblicata dall'autorità prima del voto.
 - **Schede sprecate.** Una scheda sprecata è pubblica per costruzione: serve solo a controllare il dispositivo e non viene mai contata.
 - **Modello di avversario.** La generazione congiunta della chiave con Feldman considera garanti *honest-but-curious*; un garante attivamente disonesto può influenzare in parte la distribuzione della chiave pubblica.
 - **Cabina web.** È una demo locale con il server di sviluppo di Flask: il programma fa da dispositivo di voto e riceve la scelta in chiaro. In un sistema reale la cifratura avverrebbe sul dispositivo dell'elettore.

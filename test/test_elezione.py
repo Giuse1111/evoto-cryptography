@@ -16,6 +16,7 @@ from copy import deepcopy
 
 from evoto.configurazione import (
     build_ballot_layout,
+    config_fingerprint,
     load_election_config,
 )
 from evoto.gruppo import (
@@ -29,12 +30,14 @@ from evoto.simulazione import (
     simulate_election,
 )
 from evoto.urna import CAST, SPOILED, verify_spoiled_ballot
-from evoto.voto import VoterChoice
+from evoto.voto import VoterChoice, choice_to_plaintexts
 from evoto.registro import (
     build_public_registry,
     public_registry_to_json,
 )
 from verifica.verifica import (
+    configuration_fingerprint,
+    hash_to_q,
     recompute_v8_scrutiny,
     verify_public_registry,
     verify_v4_board_rules,
@@ -146,16 +149,18 @@ def test_board_is_consistent():
 
 def test_random_choices_are_always_valid():
     """
-    Le scelte casuali rispettano sempre le regole della scheda:
-    al massimo tre preferenze, tutte nella stessa lista, al massimo
-    due per genere.
+    Le scelte casuali rispettano la forma della scheda: al massimo tre
+    preferenze, tutte nella stessa lista. Possono essere tutte dello
+    stesso genere: dopo l'annullamento fatto dal dispositivo le
+    preferenze dei due generi differiscono al più di 1 (R5).
     """
 
     rng = random.Random(3)
     layout = build_ballot_layout(CONFIG, 1)
+    annulled = 0
 
     for _ in range(300):
-        choice = random_choice(rng, layout, WEIGHTS, 0.05, 3, 2)
+        choice = random_choice(rng, layout, WEIGHTS, 0.05, 3)
 
         assert len(choice.preferences) <= 3
 
@@ -169,12 +174,20 @@ def test_random_choices_are_always_valid():
         if choice.list_index is not None and lists:
             assert lists == {choice.list_index}
 
+        _, _, bits = choice_to_plaintexts(layout, choice)
+
         genders = [
             layout.preference_metadata[box].gender
-            for box in choice.preferences
+            for box, bit in enumerate(bits)
+            if bit == 1
         ]
 
-        assert all(genders.count(gender) <= 2 for gender in genders)
+        assert abs(genders.count("F") - genders.count("M")) <= 1
+
+        annulled += len(choice.preferences) - len(genders)
+
+    # Nelle 300 scelte capitano anche preferenze dello stesso genere.
+    assert annulled > 0
 
 
 def test_plaintext_count():
@@ -199,6 +212,31 @@ def test_plaintext_count():
     assert result.list_votes[:2] == (1, 1)
     assert result.blank_votes == 1
     assert result.preference_votes[:5] == (1, 1, 0, 0, 1)
+
+
+def test_plaintext_count_applies_the_gender_rule():
+    """
+    Il conteggio in chiaro annulla le preferenze come lo scrutatore:
+    nella Lista A le caselle 0 e 2 sono due candidati M, quindi conta
+    solo la prima.
+    """
+
+    layout = build_ballot_layout(CONFIG, 0)
+
+    assert layout.preference_metadata[0].gender == "M"
+    assert layout.preference_metadata[2].gender == "M"
+
+    result = plaintext_count(
+        layout,
+        0,
+        [
+            VoterChoice(list_index=0, preferences=(0, 2)),
+            VoterChoice(list_index=0, preferences=(0, 1, 2)),
+        ],
+    )
+
+    assert result.list_votes[0] == 2
+    assert result.preference_votes[:4] == (2, 1, 1, 0)
 
 
 def test_simulation_preserves_encrypted_tallies():
@@ -242,10 +280,11 @@ def test_public_registry_contains_only_public_election_data():
         "g": TEST_PARAMS.g,
     }
 
+    # e è l'impronta della configurazione, non il suo election_id.
     assert registry["election_context"] == {
         "n": 5,
         "quorum": 3,
-        "e": CONFIG.election_id,
+        "e": config_fingerprint(CONFIG, TEST_PARAMS),
         "Q": REPORT.ceremony.base_hash,
         "Q_bar": REPORT.ceremony.extended_base_hash,
     }
@@ -599,6 +638,96 @@ def test_e3_rejects_tampered_scrutiny():
     )
 
     assert not verification["V8"]
+    assert not verification["overall"]
+
+
+def _rewrite_configuration(registry: dict) -> None:
+    """
+    Riscrive il registro come farebbe chi vuole cambiare la legge
+    elettorale dopo il voto: la soglia del premio sale al 50% e lo
+    scrutinio viene rifatto con la nuova regola, così V8 torna.
+    """
+
+    registry["configuration"]["rules"]["bonus_threshold_percent"] = 50
+    registry["scrutiny"] = recompute_v8_scrutiny(
+        registry["configuration"],
+        registry["district_results"],
+    )
+
+
+def test_e3_rejects_rewritten_configuration():
+    """
+    E3: configurazione e seggi riscritti in modo coerente. Lo scrutinio
+    torna (V8), ma l'impronta della configurazione non coincide più con
+    il valore e del contesto e V2 fallisce.
+    """
+
+    registry = build_public_registry(
+        REPORT,
+        TEST_PARAMS,
+    )
+
+    _rewrite_configuration(registry)
+
+    verification = verify_public_registry(
+        json.dumps(registry)
+    )
+
+    assert verification["V8"]
+    assert not verification["V2"]
+    assert not verification["overall"]
+
+
+def test_e3_rejects_configuration_rewritten_with_its_context():
+    """
+    E3: anche ricalcolando e, Q e Q_bar dalla configurazione nuova,
+    le prove dei garanti, delle schede e delle share erano legate al
+    contesto vecchio e non tornano più.
+    """
+
+    registry = build_public_registry(
+        REPORT,
+        TEST_PARAMS,
+    )
+
+    _rewrite_configuration(registry)
+
+    group = registry["group"]
+    context = registry["election_context"]
+    q = group["q"]
+
+    context["e"] = configuration_fingerprint(
+        registry["configuration"],
+        q,
+    )
+    context["Q"] = hash_to_q(
+        q,
+        group["p"],
+        q,
+        group["g"],
+        context["n"],
+        context["quorum"],
+        context["e"],
+    )
+    context["Q_bar"] = hash_to_q(
+        q,
+        context["Q"],
+        registry["K"],
+    )
+    registry["bulletin_board"]["extended_base_hash"] = context["Q_bar"]
+
+    verification = verify_public_registry(
+        json.dumps(registry)
+    )
+
+    failed = {
+        name
+        for name, valid in verification.items()
+        if name != "overall" and not valid
+    }
+
+    assert {"V2", "V3", "V4", "V6"} <= failed
+    assert verification["V8"]
     assert not verification["overall"]
 
 

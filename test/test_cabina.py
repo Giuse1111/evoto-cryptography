@@ -21,6 +21,7 @@ from cabina.sessione import (
     CLOSED,
     TAMPERINGS,
     ElectionSession,
+    annulled_preferences,
     demo_codes,
     explain_violation,
     format_code,
@@ -33,7 +34,6 @@ from evoto.gruppo import (
     DEMO_PARAMS,
     TEST_PARAMS,
 )
-from evoto.scheda import BallotLayout
 from evoto.urna import (
     CAST,
     SPOILED,
@@ -246,8 +246,9 @@ def test_invalid_choice_cannot_be_proved(election):
 def test_explain_violation():
     """
     Le spiegazioni seguono le regole della scheda. Nella circoscrizione
-    Nord le caselle 4 e 6 della Lista B sono entrambe F; con un limite
-    di una preferenza per genere la scelta viola R5.
+    Nord le caselle 4 e 6 della Lista B sono entrambe F: la scelta non
+    viola nessuna regola, perché il dispositivo annulla la seconda
+    preferenza come prevede la legge.
     """
 
     session = ElectionSession(config=CONFIG, params=TEST_PARAMS)
@@ -265,14 +266,15 @@ def test_explain_violation():
     assert rule(layout, None, (4, 0)) == "R3"
     assert rule(layout, 1, (4, 5, 6, 7)) == "R4"
 
-    strict = BallotLayout(
-        list_count=layout.list_count,
-        preference_metadata=layout.preference_metadata,
-        max_preferences=3,
-        max_preferences_per_gender=1,
-    )
-
-    assert rule(strict, 1, (4, 6)) == "R5"
+    assert rule(layout, 1, (4, 6)) is None
+    assert annulled_preferences(
+        layout,
+        VoterChoice(list_index=1, preferences=(4, 6)),
+    ) == (6,)
+    assert annulled_preferences(
+        layout,
+        VoterChoice(list_index=1, preferences=(4, 5, 6)),
+    ) == ()
 
 
 def test_close_requires_the_quorum(election):
@@ -322,6 +324,7 @@ def test_registry_is_verified_and_tampering_is_detected(election):
         "codice": {"V4"},
         "share": {"V6", "V7"},
         "garante": {"V2"},
+        "configurazione": {"V2"},
     }
 
     assert set(expected) == set(TAMPERINGS)
@@ -484,6 +487,16 @@ def test_web_flow(election, tmp_path):
     assert re.search(r'name="lista" value="1"\s+checked', page)
     assert re.search(r'value="0"\s+data-list="0" data-gender="M"\s+checked', page)
     assert re.search(r'id="scorretto" name="scorretto" value="1" checked', page)
+
+    # Due preferenze a candidate della stessa lista: per legge vale solo
+    # la prima in ordine di lista e la pagina di conferma lo dice.
+    page = client.post(
+        f"/cabina/{NORD[5]}",
+        data={"lista": "1", "preferenze": ["4", "6"]},
+    ).get_data(as_text=True)
+
+    assert "Hai scelto: <strong>Lista B; preferenze: Bruno E.</strong>" in page
+    assert "è stata annullata quella a\n      Fontana G." in page
 
     page = client.post(
         "/spoglio",

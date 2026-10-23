@@ -311,6 +311,103 @@ print("CROSS_RESULT=" + str(success))
 
 
 @pytest.mark.parametrize("plaintext", [0, 1])
+def test_t3_electionguard_proof_verified_by_independent_verifier(plaintext):
+    """
+    T3, prima direzione, con il verificatore indipendente.
+
+    Le altre direzioni di T3 confrontano ElectionGuard con la libreria
+    evoto. Qui la stessa prova 0/1 generata da ElectionGuard viene
+    controllata da verifica/verifica.py, che non importa evoto: così
+    anche il verificatore ha un riscontro esterno, almeno sulla prova
+    che le due implementazioni hanno in comune.
+    """
+
+    code = f"""
+from electionguard.constants import (
+    get_large_prime,
+    get_small_prime,
+    get_generator,
+)
+from electionguard.group import int_to_p, int_to_q
+from electionguard.elgamal import elgamal_encrypt
+from electionguard.chaum_pedersen import (
+    make_disjunctive_chaum_pedersen,
+)
+
+from verifica.verifica import verify_value_set_proof
+
+p = get_large_prime()
+q = get_small_prime()
+g = get_generator()
+
+public_key = pow(g, 2, p)
+nonce = int_to_q(3)
+context = int_to_q(12345)
+
+eg_ciphertext = elgamal_encrypt(
+    {plaintext},
+    nonce,
+    int_to_p(public_key),
+)
+
+eg_proof = make_disjunctive_chaum_pedersen(
+    eg_ciphertext,
+    nonce,
+    int_to_p(public_key),
+    context,
+    int_to_q(99),
+    {plaintext},
+)
+
+branches = (
+    (
+        int(eg_proof.proof_zero_pad),
+        int(eg_proof.proof_zero_data),
+        int(eg_proof.proof_zero_challenge),
+        int(eg_proof.proof_zero_response),
+    ),
+    (
+        int(eg_proof.proof_one_pad),
+        int(eg_proof.proof_one_data),
+        int(eg_proof.proof_one_challenge),
+        int(eg_proof.proof_one_response),
+    ),
+)
+
+success = verify_value_set_proof(
+    p=p,
+    q=q,
+    g=g,
+    public_key=public_key,
+    context=int(context),
+    alpha=int(eg_ciphertext.pad),
+    beta=int(eg_ciphertext.data),
+    allowed_values=(0, 1),
+    branches=branches,
+)
+
+# Una prova per un valore diverso non deve passare.
+wrong = verify_value_set_proof(
+    p=p,
+    q=q,
+    g=g,
+    public_key=public_key,
+    context=int(context),
+    alpha=int(eg_ciphertext.pad),
+    beta=int(eg_ciphertext.data) * g % p,
+    allowed_values=(0, 1),
+    branches=branches,
+)
+
+print("CROSS_RESULT=" + str(success and not wrong))
+"""
+
+    output = _run_with_reference_python(code)
+
+    assert "CROSS_RESULT=True" in output
+
+
+@pytest.mark.parametrize("plaintext", [0, 1])
 def test_t3_evoto_proof_verified_by_electionguard(plaintext):
     """
     T3, seconda direzione.

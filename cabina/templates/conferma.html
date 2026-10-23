@@ -9,6 +9,13 @@
 <div class="card choice-summary">
   <p class="muted">Carta d'identità n. {{ pending.voter_id }} · circoscrizione {{ district.name }}</p>
   <p class="lead">Hai scelto: <strong>{{ description }}</strong></p>
+  {% if annulled %}
+    <p class="notice" role="status">
+      Le preferenze erano tutte dello stesso genere: come prevede la legge vale solo la prima
+      in ordine di lista, quindi {{ 'è stata annullata quella a' if annulled | length == 1 else 'sono state annullate quelle a' }}
+      {{ annulled | join(', ') }}.
+    </p>
+  {% endif %}
   <p>La scheda è già chiusa nella sua busta digitale: nessuno può leggerla.</p>
 </div>
 
